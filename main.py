@@ -68,33 +68,32 @@ async def chek_uins():
             for uin in uins:
                 uin = uin[0]
                 print(f"Проверяю UIN: {uin}")
-                while True:
-                    response = requests.get(f"https://probpalata.gov.ru/check-uin/?action=check&uin={uin}", headers=headers, timeout=10)
-                    response.raise_for_status()
-                    soup = BeautifulSoup(response.text, 'html.parser')
-                    data = {
-                        'paragraphs': [p.text.strip() for p in soup.find_all('p') if p.text.strip()]
-                    }
-                    if len(data['paragraphs']) < 24:
-                        print(f"Словил блокировку, ожидаю!!!")
-                        await asyncio.sleep(60 * 5)
-                    else:
-                        break
-                await asyncio.sleep(10)
-                if data['paragraphs'][24] == "Продано":
-                    cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {uin}")
-                    if cursor.fetchone()[0] > 0:
-                        cursor.execute(
-                            f"UPDATE UINs SET UIN = '{uin}', status = true WHERE UIN = '{uin}'")
-                        conn.commit()
-                    print(f"Статус UIN {uin}: Продано")
+                response = requests.get(f"https://probpalata.gov.ru/check-uin/?action=check&uin={uin}", headers=headers,
+                                        timeout=10)
+                response.raise_for_status()
+                soup = BeautifulSoup(response.text, 'html.parser')
+                data = {
+                    'paragraphs': [p.text.strip() for p in soup.find_all('p') if p.text.strip()]
+                }
+                if len(data['paragraphs']) < 24:
+                    print(f"Словил блокировку, пропускаю и жду 2 минуты!!!")
+                    await asyncio.sleep(60 * 2)
                 else:
-                    print(f"Статус UIN {uin}: Не Продано")
+                    await asyncio.sleep(20)
+                    if data['paragraphs'][24] == "Продано":
+                        cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {uin}")
+                        if cursor.fetchone()[0] > 0:
+                            cursor.execute(
+                                f"UPDATE UINs SET UIN = '{uin}', status = true WHERE UIN = '{uin}'")
+                            conn.commit()
+                        print(f"Статус UIN {uin}: Продано")
+                    else:
+                        print(f"Статус UIN {uin}: Не Продано")
         except Exception as e:
             print(f"Ошибка в обработке UIN: {e}")
 
-        print("Ожидаю 20 минут, перед следующим запросом к БД")
-        await asyncio.sleep(60 * 20)
+        print("Ожидаю 10 минут, перед следующим запросом к БД")
+        await asyncio.sleep(60 * 10)
 
 
 @asynccontextmanager
