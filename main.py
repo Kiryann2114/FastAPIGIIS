@@ -1,0 +1,132 @@
+import uvicorn
+import sqlite3
+from pydantic import BaseModel
+from fastapi import FastAPI, BackgroundTasks
+import asyncio
+from contextlib import asynccontextmanager
+import requests
+from bs4 import BeautifulSoup
+
+
+
+
+conn = sqlite3.connect("DBUin.db")
+cursor = conn.cursor()
+
+def SetUIN(Uins):
+    try:
+        for UIN in Uins:
+            cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {UIN}")
+            if cursor.fetchone()[0] > 0:
+                cursor.execute(
+                    f"UPDATE UINs SET UIN = '{UIN}', status = false WHERE UIN = '{UIN}'")
+            else:
+                cursor.execute(
+                    f"INSERT INTO UINs (UIN) VALUES ('{UIN}')")
+        conn.commit()
+        return "Данные успешно загружены"
+    except:
+        return "Не удалось загрузить данные"
+
+
+def DeleteUIN(Uins):
+    try:
+        for UIN in Uins:
+            cursor.execute(f"DELETE FROM UINs WHERE UIN = '{UIN}' and status = 1")
+        conn.commit()
+        return "Данные успешно удалены"
+    except:
+        return "Не удалось удалить данные"
+
+
+def GetUINStatus():
+    cursor.execute(f'SELECT UIN FROM UINs WHERE status = 1')
+    all_uin = cursor.fetchall()
+    arr_uin = []
+    for uin in all_uin:
+        arr_uin.append(uin[0])
+    return arr_uin
+
+
+headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    'Accept-Language': 'ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3',
+    'Accept-Encoding': 'gzip, deflate',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+}
+
+
+async def chek_uins():
+    while True:
+        try:
+            print("Получаю данные из БД")
+            cursor.execute("SELECT UIN FROM UINs WHERE status = false")
+            uins = cursor.fetchall()
+            for uin in uins:
+                uin = uin[0]
+                print(f"Проверяю UIN: {uin}")
+                while True:
+                    response = requests.get(f"https://probpalata.gov.ru/check-uin/?action=check&uin={uin}", headers=headers, timeout=10)
+                    response.raise_for_status()
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    data = {
+                        'paragraphs': [p.text.strip() for p in soup.find_all('p') if p.text.strip()]
+                    }
+                    if len(data['paragraphs']) < 24:
+                        print(f"Словил блокировку, ожидаю!!!")
+                        await asyncio.sleep(60 * 5)
+                    else:
+                        break
+                await asyncio.sleep(10)
+                if data['paragraphs'][24] == "Продано":
+                    cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {uin}")
+                    if cursor.fetchone()[0] > 0:
+                        cursor.execute(
+                            f"UPDATE UINs SET UIN = '{uin}', status = true WHERE UIN = '{uin}'")
+                        conn.commit()
+                    print(f"Статус UIN {uin}: Продано")
+                else:
+                    print(f"Статус UIN {uin}: Не Продано")
+        except Exception as e:
+            print(f"Ошибка в обработке UIN: {e}")
+
+        print("Ожидаю 20 минут, перед следующим запросом к БД")
+        await asyncio.sleep(60 * 20)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    asyncio.create_task(chek_uins())
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
+
+
+class ModelGet(BaseModel):
+    UINs: list[str]
+
+@app.post("/api/SetUIN")
+async def APISetUIN(body: ModelGet):
+    return SetUIN(body.UINs)
+
+
+@app.post("/api/DeleteUIN")
+async def APIDeleteUIN(body: ModelGet):
+    return DeleteUIN(body.UINs)
+
+
+@app.get("/api/GetUINStatus")
+async def APIGetUINStatus():
+    return GetUINStatus()
+
+
+#if __name__ == '__main__':
+    uvicorn.run(
+        'main:app',
+        host="0.0.0.0",
+        port=8000,
+        reload=True
+        )
