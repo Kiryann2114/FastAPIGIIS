@@ -5,7 +5,9 @@ Content-Type: application/json
 Accept: application/json
 
 {
-  "UINs": ["6432500524257096","6432500538951151"]
+  "UINs": ["6432500524257096","6432500538951151"],
+  "login": "admin",
+  "password": "h6mCbIA0GN"
 }
 
 ###
@@ -15,7 +17,9 @@ Content-Type: application/json
 Accept: application/json
 
 {
-  "UINs": ["6432500524257096"]
+  "UINs": ["6432500524257096"],
+  "login": "admin",
+  "password": "h6mCbIA0GN"
 }
 
 ###

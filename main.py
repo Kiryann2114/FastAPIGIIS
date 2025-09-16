@@ -6,6 +6,7 @@ import asyncio
 from contextlib import asynccontextmanager
 import requests
 from bs4 import BeautifulSoup
+import hashlib
 
 
 
@@ -105,17 +106,36 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
+def hash_password(password):
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
+def check_user(login, password):
+    cursor.execute(f"SELECT COUNT(*) FROM account WHERE login = '{login}' and password = '{hash_password(password)}'")
+    if cursor.fetchone()[0] > 0:
+        return True
+    else:
+        return False
+
+
 class ModelGet(BaseModel):
     UINs: list[str]
+    login: str
+    password: str
 
 @app.post("/api/SetUIN")
 async def APISetUIN(body: ModelGet):
-    return SetUIN(body.UINs)
+    if check_user(body.login, body.password):
+        return SetUIN(body.UINs)
+    else:
+        return 505
 
 
 @app.post("/api/DeleteUIN")
 async def APIDeleteUIN(body: ModelGet):
-    return DeleteUIN(body.UINs)
+    if check_user(body.login, body.password):
+        return DeleteUIN(body.UINs)
+    else:
+        return 505
 
 
 @app.get("/api/GetUINStatus")
