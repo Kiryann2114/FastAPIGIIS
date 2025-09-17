@@ -75,6 +75,8 @@ async def chek_uins():
                     soup = BeautifulSoup(response.text, 'html.parser')
                     data = [p.text.strip() for p in soup.find_all('p', class_='check-result-row__value')if p.text.strip()]
                     await asyncio.sleep(5)
+                    print(f"Попытка {i+1}/5")
+                    print(data)
                     if len(data) >= 5:
                         break
                 if len(data) >= 5:
