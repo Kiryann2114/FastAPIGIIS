@@ -67,7 +67,7 @@ async def chek_uins():
             uins = cursor.fetchall()
             for uin in uins:
                 uin = uin[0]
-                data = {'paragraphs': [""]}
+                data = None
                 fl = False
                 for i in range(1, 4):
                     print(f"Попытка {i}/3 проверить UIN: {uin}")
@@ -77,16 +77,17 @@ async def chek_uins():
                         response.raise_for_status()
                         soup = BeautifulSoup(response.text, 'html.parser')
                         data = {
-                            'paragraphs': [p.text.strip() for p in soup.find_all('p') if p.text.strip()]
+                            'paragraphs': [p.text.strip() for p in soup.find_all('p', class_='check-result-row__value')
+                                           if p.text.strip()]
                         }
                         await asyncio.sleep(20)
+                        if len(data['paragraphs']) >= 4:
+                            fl = True
+                            break
                     except:
                         print(f"Ошибка не удалось послать запрос в сервис проверки")
-                    if len(data['paragraphs']) >= 24:
-                        fl = True
-                        break
                 if fl:
-                    if data['paragraphs'][24] == "Продано":
+                    if data['paragraphs'][4] == "Продано":
                         cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {uin}")
                         if cursor.fetchone()[0] > 0:
                             cursor.execute(
