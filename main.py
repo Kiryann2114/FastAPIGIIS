@@ -68,18 +68,21 @@ async def chek_uins():
             for uin in uins:
                 uin = uin[0]
                 print(f"Проверяю UIN: {uin}")
-                while True:
-                    response = requests.get(f"https://probpalata.gov.ru/check-uin/?action=check&uin={uin}", headers=headers, timeout=10)
-                    response.raise_for_status()
-                    soup = BeautifulSoup(response.text, 'html.parser')
-                    data = {
-                        'paragraphs': [p.text.strip() for p in soup.find_all('p') if p.text.strip()]
-                    }
-                    if len(data['paragraphs']) < 24:
-                        print(f"Словил блокировку, ожидаю!!!")
-                        await asyncio.sleep(60 * 2)
-                    else:
-                        break
+                try:
+                    while True:
+                        response = requests.get(f"https://probpalata.gov.ru/check-uin/?action=check&uin={uin}", headers=headers, timeout=10)
+                        response.raise_for_status()
+                        soup = BeautifulSoup(response.text, 'html.parser')
+                        data = {
+                            'paragraphs': [p.text.strip() for p in soup.find_all('p') if p.text.strip()]
+                        }
+                        if len(data['paragraphs']) < 24:
+                            print(f"Словил блокировку, ожидаю!!!")
+                            await asyncio.sleep(60 * 2)
+                        else:
+                            break
+                except:
+                    print(f"Ошибка не удалось послать запрос в сервис проверки")
                 await asyncio.sleep(20)
                 if data['paragraphs'][24] == "Продано":
                     cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {uin}")
