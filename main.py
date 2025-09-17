@@ -68,17 +68,11 @@ async def chek_uins():
             for uin in uins:
                 uin = uin[0]
                 print(f"Проверяю UIN: {uin}")
-                for i in range(5):
-                    response = requests.get(f"https://probpalata.gov.ru/check-uin/?action=check&uin={uin}",
-                                            headers=headers, timeout=10)
-                    response.raise_for_status()
-                    soup = BeautifulSoup(response.text, 'html.parser')
-                    data = [p.text.strip() for p in soup.find_all('p', class_='check-result-row__value')if p.text.strip()]
-                    await asyncio.sleep(5)
-                    print(f"Попытка {i+1}/5")
-                    print(data)
-                    if len(data) >= 5:
-                        break
+                response = requests.get(f"https://probpalata.gov.ru/check-uin/?action=check&uin={uin}",
+                                        headers=headers, timeout=10)
+                response.raise_for_status()
+                soup = BeautifulSoup(response.text, 'html.parser')
+                data = [p.text.strip() for p in soup.find_all('p', class_='check-result-row__value') if p.text.strip()]
                 if len(data) >= 5:
                     if data[5] == "Продано":
                         cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {uin}")
@@ -89,8 +83,10 @@ async def chek_uins():
                         print(f"Статус UIN {uin}: Продано")
                     else:
                         print(f"Статус UIN {uin}: Не Продано")
+                    await asyncio.sleep(30)
                 else:
-                    print(f"Не получилось проверить. Пропускаю UIN: {uin}")
+                    print(f"Блокировка ожидаю 2 минуты>")
+                    await asyncio.sleep(60*2)
         except Exception as e:
             print(f"Ошибка в обработке UIN: {e}")
 
