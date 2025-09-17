@@ -71,13 +71,12 @@ async def chek_uins():
                                         headers=headers, timeout=10)
                 response.raise_for_status()
                 soup = BeautifulSoup(response.text, 'html.parser')
-                data = {
-                    'paragraphs': [p.text.strip() for p in soup.find_all('p', class_='check-result-row__value')
-                                   if p.text.strip()]
-                }
+                data = [p.text.strip() for p in soup.find_all('p', class_='check-result-row__value')if p.text.strip()]
+                print(data)
+                print(len(data))
                 await asyncio.sleep(10)
-                if len(data['paragraphs']) >= 5:
-                    if data['paragraphs'][5] == "Продано":
+                if len(data) >= 5:
+                    if data[5] == "Продано":
                         cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {uin}")
                         if cursor.fetchone()[0] > 0:
                             cursor.execute(
