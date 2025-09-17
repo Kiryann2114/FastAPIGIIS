@@ -74,7 +74,7 @@ async def chek_uins():
                 soup = BeautifulSoup(response.text, 'html.parser')
                 data = [p.text.strip() for p in soup.find_all('p', class_='check-result-row__value')if p.text.strip()]
                 print(data)
-                print(response)
+                print(response.text)
                 await asyncio.sleep(10)
                 if len(data) >= 5:
                     if data[5] == "Продано":
