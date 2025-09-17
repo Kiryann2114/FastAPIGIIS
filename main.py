@@ -68,7 +68,7 @@ async def chek_uins():
             for uin in uins:
                 uin = uin[0]
                 print(f"Проверяю UIN: {uin}")
-                while True:
+                for i in range(5):
                     response = requests.get(f"https://probpalata.gov.ru/check-uin/?action=check&uin={uin}",
                                             headers=headers, timeout=10)
                     response.raise_for_status()
