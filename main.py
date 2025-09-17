@@ -71,23 +71,20 @@ async def chek_uins():
                 fl = False
                 for i in range(1, 4):
                     print(f"Попытка {i}/3 проверить UIN: {uin}")
-                    try:
-                        response = requests.get(f"https://probpalata.gov.ru/check-uin/?action=check&uin={uin}",
-                                                headers=headers, timeout=10)
-                        response.raise_for_status()
-                        soup = BeautifulSoup(response.text, 'html.parser')
-                        data = {
-                            'paragraphs': [p.text.strip() for p in soup.find_all('p', class_='check-result-row__value')
-                                           if p.text.strip()]
-                        }
-                        await asyncio.sleep(20)
-                        if len(data['paragraphs']) >= 4:
-                            fl = True
-                            break
-                    except:
-                        print(f"Ошибка не удалось послать запрос в сервис проверки")
+                    response = requests.get(f"https://probpalata.gov.ru/check-uin/?action=check&uin={uin}",
+                                            headers=headers, timeout=10)
+                    response.raise_for_status()
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    data = {
+                        'paragraphs': [p.text.strip() for p in soup.find_all('p', class_='check-result-row__value')
+                                       if p.text.strip()]
+                    }
+                    await asyncio.sleep(10)
+                    if len(data['paragraphs']) >= 5:
+                        fl = True
+                        break
                 if fl:
-                    if data['paragraphs'][4] == "Продано":
+                    if data['paragraphs'][5] == "Продано":
                         cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {uin}")
                         if cursor.fetchone()[0] > 0:
                             cursor.execute(
