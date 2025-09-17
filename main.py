@@ -7,11 +7,8 @@ from contextlib import asynccontextmanager
 import requests
 from bs4 import BeautifulSoup
 import hashlib
-import logging
 
-# Настройка логгера
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+
 
 
 conn = sqlite3.connect("DBUin.db")
@@ -65,12 +62,12 @@ headers = {
 async def chek_uins():
     while True:
         try:
-            logger.info("Получаю данные из БД")
+            print("Получаю данные из БД")
             cursor.execute("SELECT UIN FROM UINs WHERE status = false")
             uins = cursor.fetchall()
             for uin in uins:
                 uin = uin[0]
-                logger.info(f"Проверяю UIN: {uin}")
+                print(f"Проверяю UIN: {uin}")
                 response = requests.get(f"https://probpalata.gov.ru/check-uin/?action=check&uin={uin}",
                                         headers=headers, timeout=10)
                 response.raise_for_status()
@@ -83,15 +80,15 @@ async def chek_uins():
                             cursor.execute(
                                 f"UPDATE UINs SET UIN = '{uin}', status = true WHERE UIN = '{uin}'")
                             conn.commit()
-                        logger.info(f"Статус UIN {uin}: Продано")
+                        print(f"Статус UIN {uin}: Продано")
                     else:
-                        logger.info(f"Статус UIN {uin}: Не Продано")
+                        print(f"Статус UIN {uin}: Не Продано")
                     await asyncio.sleep(30)
                 else:
-                    logger.info(f"Блокировка ожидаю 2 минуты")
+                    print(f"Блокировка ожидаю 2 минуты>")
                     await asyncio.sleep(60*2)
         except Exception as e:
-            logger.info(f"Ошибка в обработке UIN: {e}")
+            print(f"Ошибка в обработке UIN: {e}")
 
 
 @asynccontextmanager
