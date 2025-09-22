@@ -3,5 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="Python 3.13 (FastAPIGIIS)" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.13 (FastAPIGIIS)" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.13 (GIIS_FastAPI)" project-jdk-type="Python SDK" />
 </project>
