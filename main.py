@@ -67,7 +67,6 @@ async def chek_uins():
             uins = cursor.fetchall()
             for uin in uins:
                 uin = uin[0]
-                print(f"Проверяю UIN: {uin}")
                 response = requests.get(f"https://probpalata.gov.ru/check-uin/?action=check&uin={uin}", headers=headers,
                                         timeout=10)
                 response.raise_for_status()
