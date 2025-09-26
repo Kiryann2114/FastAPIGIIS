@@ -50,11 +50,23 @@ def GetUINStatus():
 
 
 headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    'Accept-Language': 'ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3',
-    'Accept-Encoding': 'gzip, deflate',
+
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+    'Accept-Language': 'ru,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br, zstd',
+    'Cache-Control': 'no-cache',
     'Connection': 'keep-alive',
+    'Cookie': 'PHPSESSID=a5816542694fa6ee366207c68855b3e4; sp_test=1; sputnik_session=1758892651600|41',
+    'Host': 'probpalata.gov.ru',
+    'Pragma': 'no-cache',
+    'Sec-Ch-Ua': '"Not)A;Brand";v="8", "Chromium";v="138", "YaBrowser";v="25.8", "Yowser";v="2.5"',
+    'Sec-Ch-Ua-Mobile': '?0',
+    'Sec-Ch-Ua-Platform': '"Windows"',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
     'Upgrade-Insecure-Requests': '1',
 }
 
@@ -85,7 +97,7 @@ async def chek_uins():
                         print(f"Статус UIN {uin}: Не Продано")
                 else:
                     print(f"Не удалось проверить UIN: {uin}")
-                await asyncio.sleep(25)
+                await asyncio.sleep(3)
         except Exception as e:
             print(f"Ошибка в обработке UIN: {e}")
 
