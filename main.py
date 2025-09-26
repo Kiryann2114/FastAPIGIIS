@@ -71,14 +71,13 @@ async def chek_uins():
                 for i in range(2):
                     if i != 0:
                         print(f"Повторно проверяю UIN: {uin}")
-                    response = requests.get(f"https://probpalata.gov.ru/check-uin/?action=check&uin={uin}",
-                                            headers=headers, timeout=10)
+                    response = requests.get(f"https://probpalata.gov.ru/check-uin/?action=check&uin={uin}",headers=headers, timeout=10)
                     response.raise_for_status()
                     soup = BeautifulSoup(response.text, 'html.parser')
                     data = [p.text.strip() for p in soup.find_all('p', class_='check-result-row__value') if p.text.strip()]
 
                     print(data)
-                    
+
                     if len(data) >= 5:
                         if data[5] == "Продано":
                             cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {uin}")
@@ -91,7 +90,7 @@ async def chek_uins():
                             print(f"Статус UIN {uin}: Не Продано")
                     else:
                         print(f"Не удалось проверить UIN: {uin}")
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(50)
         except Exception as e:
             print(f"Ошибка в обработке UIN: {e}")
 
