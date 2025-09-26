@@ -68,22 +68,28 @@ async def chek_uins():
             for uin in uins:
                 uin = uin[0]
                 print(f"Проверяю UIN: {uin}")
-                response = requests.get(f"https://probpalata.gov.ru/check-uin/?action=check&uin={uin}",
-                                        headers=headers, timeout=10)
-                response.raise_for_status()
-                soup = BeautifulSoup(response.text, 'html.parser')
-                data = [p.text.strip() for p in soup.find_all('p', class_='check-result-row__value') if p.text.strip()]
-                if len(data) >= 5:
-                    if data[5] == "Продано":
-                        cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {uin}")
-                        if cursor.fetchone()[0] > 0:
-                            cursor.execute(
-                                f"UPDATE UINs SET UIN = '{uin}', status = true WHERE UIN = '{uin}'")
-                            conn.commit()
-                        print(f"Статус UIN {uin}: Продано")
+                for i in range(2):
+                    if i != 0:
+                        print(f"Повторно проверяю UIN: {uin}")
+                    response = requests.get(f"https://probpalata.gov.ru/check-uin/?action=check&uin={uin}",
+                                            headers=headers, timeout=10)
+                    response.raise_for_status()
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    data = [p.text.strip() for p in soup.find_all('p', class_='check-result-row__value') if p.text.strip()]
+
+                    if len(data) >= 5:
+                        if data[5] == "Продано":
+                            cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {uin}")
+                            if cursor.fetchone()[0] > 0:
+                                cursor.execute(
+                                    f"UPDATE UINs SET UIN = '{uin}', status = true WHERE UIN = '{uin}'")
+                                conn.commit()
+                            print(f"Статус UIN {uin}: Продано")
+                        else:
+                            print(f"Статус UIN {uin}: Не Продано")
                     else:
-                        print(f"Статус UIN {uin}: Не Продано")
-                await asyncio.sleep(5)
+                        print(f"Не удалось проверить UIN: {uin}")
+                    await asyncio.sleep(5)
         except Exception as e:
             print(f"Ошибка в обработке UIN: {e}")
 
