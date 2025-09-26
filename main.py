@@ -83,7 +83,7 @@ async def chek_uins():
                         print(f"Статус UIN {uin}: Продано")
                     else:
                         print(f"Статус UIN {uin}: Не Продано")
-                await asyncio.sleep(10)
+                await asyncio.sleep(5)
         except Exception as e:
             print(f"Ошибка в обработке UIN: {e}")
 
