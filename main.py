@@ -74,10 +74,11 @@ async def chek_uins():
                     response = requests.get(f"https://probpalata.gov.ru/check-uin/?action=check&uin={uin}",
                                             headers=headers, timeout=10)
                     response.raise_for_status()
-                    print(response)
                     soup = BeautifulSoup(response.text, 'html.parser')
                     data = [p.text.strip() for p in soup.find_all('p', class_='check-result-row__value') if p.text.strip()]
 
+                    print(data)
+                    
                     if len(data) >= 5:
                         if data[5] == "Продано":
                             cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {uin}")
