@@ -78,6 +78,7 @@ async def chek_uins():
                 response = session.post(
                     f"https://probpalata.gov.ru/check-uin/",
                     data=data,
+                    headers=headers,
                     timeout=10
                 )
                 response.raise_for_status()
