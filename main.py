@@ -73,14 +73,7 @@ def create_session_with_headers():
 
     }
 
-    cookies = {
-        'sp_test': '1',
-        'PHPSESSID': '9c46b39290fcee24060147a52f4ed71b',
-        'sputnik_session': '1759130071782|1'
-    }
-
     session.headers.update(headers)
-    session.cookies.update(cookies)
     return session
 
 session = create_session_with_headers()
