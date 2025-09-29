@@ -73,7 +73,14 @@ def create_session_with_headers():
 
     }
 
+    cookies = {
+        'sp_test': '1',
+        'PHPSESSID': '9c46b39290fcee24060147a52f4ed71b',
+        'sputnik_session': '1759130071782|1'
+    }
+
     session.headers.update(headers)
+    session.cookies.update(cookies)
     return session
 
 session = create_session_with_headers()
@@ -90,14 +97,13 @@ async def chek_uins():
                     'action': 'check',
                     'uin': uin
                 }
-                session.get('https://probpalata.gov.ru')
+                session.get('https://probpalata.gov.ru', timeout=5)
                 print(session.cookies)
                 response = session.post(
                     f"https://probpalata.gov.ru/check-uin/",
                     data=data,
                     timeout=10
                 )
-                print(session.cookies)
                 response.raise_for_status()
                 soup = BeautifulSoup(response.text, 'html.parser')
                 data = [p.text.strip() for p in soup.find_all('p', class_='check-result-row__value') if p.text.strip()]
