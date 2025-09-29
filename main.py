@@ -104,11 +104,14 @@ async def check_uin_with_selenium(uin):
         wait.until(
             EC.presence_of_element_located((By.CSS_SELECTOR, ".check-result-row__value"))
         )
+        print(".check - result - row__value  прогрузился")
 
+        print("начинаю парсить")
         # Парсим результаты
         soup = BeautifulSoup(driver.page_source, 'html.parser')
         data = [p.text.strip() for p in soup.find_all('p', class_='check-result-row__value') if p.text.strip()]
 
+        print(data)
         if len(data) >= 5:
             if data[5] == "Продано":
                 cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {uin}")
