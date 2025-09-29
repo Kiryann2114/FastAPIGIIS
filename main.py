@@ -70,6 +70,7 @@ def create_session_with_headers():
         'sec-fetch-user': '?1',
         'upgrade-insecure-requests': '1',
         'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36'
+
     }
 
     session.headers.update(headers)
@@ -90,6 +91,7 @@ async def chek_uins():
                 }
                 session = create_session_with_headers()
                 session.get('https://probpalata.gov.ru/')
+                print(session.cookies)
                 response = session.post(
                     f"https://probpalata.gov.ru/check-uin/",
                     data=data,
