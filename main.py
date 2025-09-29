@@ -89,12 +89,17 @@ async def chek_uins():
                     'action': 'check',
                     'uin': uin
                 }
+                cookies = {
+                    'sp_test': '1',
+                    'PHPSESSID': '9c46b39290fcee24060147a52f4ed71b',
+                    'sputnik_session': '1759130071782|1'
+                }
                 session = create_session_with_headers()
-                session.get('https://probpalata.gov.ru/')
                 print(session.cookies)
                 response = session.post(
                     f"https://probpalata.gov.ru/check-uin/",
                     data=data,
+                    cookies=cookies,
                     timeout=10
                 )
                 response.raise_for_status()
