@@ -105,6 +105,9 @@ async def check_uin_with_selenium(uin):
         except:
             print("Прогружаю снова")
             driver.refresh()
+            wait.until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".check-result-row__value"))
+            )
 
         # Парсим результаты
         soup = BeautifulSoup(driver.page_source, 'html.parser')
