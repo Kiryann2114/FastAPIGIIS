@@ -77,6 +77,7 @@ def create_session_with_headers():
     return session
 
 session = create_session_with_headers()
+session.get('https://probpalata.gov.ru', timeout=5)
 
 async def chek_uins():
     while True:
@@ -90,7 +91,7 @@ async def chek_uins():
                     'action': 'check',
                     'uin': uin
                 }
-                session.get('https://probpalata.gov.ru', timeout=5)
+
                 response = session.post(
                     f"https://probpalata.gov.ru/check-uin/",
                     data=data,
