@@ -79,7 +79,7 @@ async def check_uin_with_selenium(uin):
         driver.get("https://probpalata.gov.ru/check-uin")
 
         # Ждем загрузки страницы и находим поле для ввода UIN
-        wait = WebDriverWait(driver, 3)
+        wait = WebDriverWait(driver, 5)
 
         # Ищем поле ввода UIN (возможно, нужно уточнить селектор)
         uin_input = wait.until(
