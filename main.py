@@ -139,7 +139,8 @@ async def chek_uins():
 
             for uin in uins:
                 uin = uin[0]
-                await check_uin_with_selenium(uin)  # Пауза между проверками
+                await check_uin_with_selenium(uin)
+                await asyncio.sleep(1)  # Пауза между проверками
 
         except Exception as e:
             print(f"Ошибка в обработке UIN: {e}")
