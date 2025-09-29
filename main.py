@@ -47,17 +47,33 @@ def GetUINStatus():
     return arr_uin
 
 
-headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.5',
-    'Accept-Encoding': 'gzip, deflate',
-    'Connection': 'keep-alive',
-    'Upgrade-Insecure-Requests': '1',
-    'Host': 'probpalata.gov.ru',
-    'Referer': 'https://probpalata.gov.ru/',
-    'Origin': 'https://probpalata.gov.ru',
-}
+def create_session_with_headers():
+    session = requests.Session()
+
+    headers = {
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'accept-encoding': 'gzip, deflate, br, zstd',
+        'accept-language': 'ru,en;q=0.9',
+        'cache-control': 'no-cache',
+        'connection': 'keep-alive',
+        'content-type': 'application/x-www-form-urlencoded',
+        'host': 'probpalata.gov.ru',
+        'origin': 'https://probpalata.gov.ru',
+        'pragma': 'no-cache',
+        'referer': 'https://probpalata.gov.ru/',
+        'sec-ch-ua': '"Not)A;Brand";v="8", "Chromium";v="138", "YaBrowser";v="25.8", "Yowser";v="2.5"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
+        'sec-fetch-dest': 'document',
+        'sec-fetch-mode': 'navigate',
+        'sec-fetch-site': 'same-origin',
+        'sec-fetch-user': '?1',
+        'upgrade-insecure-requests': '1',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36'
+    }
+
+    session.headers.update(headers)
+    return session
 
 
 async def chek_uins():
@@ -72,13 +88,11 @@ async def chek_uins():
                     'action': 'check',
                     'uin': uin
                 }
-                session = requests.Session()
-                session.headers.update(headers)
-                session.get('https://example.com')
+                session = create_session_with_headers()
+                session.get('https://probpalata.gov.ru/check-uin/')
                 response = session.post(
                     f"https://probpalata.gov.ru/check-uin/",
                     data=data,
-                    headers=headers,
                     timeout=10
                 )
                 response.raise_for_status()
