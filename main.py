@@ -89,7 +89,7 @@ async def chek_uins():
                     'uin': uin
                 }
                 session = create_session_with_headers()
-                session.get('https://probpalata.gov.ru/check-uin/')
+                session.get('https://probpalata.gov.ru/')
                 response = session.post(
                     f"https://probpalata.gov.ru/check-uin/",
                     data=data,
