@@ -76,10 +76,25 @@ async def check_uin_with_selenium(uin):
         driver = setup_driver()
 
         # Переходим на страницу
-        driver.get(f"https://probpalata.gov.ru/check-uin/?action=check&uin={uin}")
+        driver.get("https://probpalata.gov.ru/check-uin")
 
         # Ждем загрузки страницы и находим поле для ввода UIN
         wait = WebDriverWait(driver, 10)
+
+        # Ищем поле ввода UIN (возможно, нужно уточнить селектор)
+        uin_input = wait.until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='uin']"))
+        )
+
+        # Вводим UIN
+        uin_input.clear()
+        uin_input.send_keys(uin)
+
+        # Находим и нажимаем кнопку проверки (возможно, нужно уточнить селектор)
+        check_button = wait.until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit'][class='button form-row__button']"))
+        )
+        check_button.click()
 
         # Ждем загрузки результатов
         wait.until(
@@ -107,7 +122,7 @@ async def check_uin_with_selenium(uin):
             return False
 
     except Exception as e:
-        print(f"Ошибка при проверке UIN {uin}: {e}")
+        print(f"Ошибка при проверке UIN {uin}")
         return False
     finally:
         if driver:
