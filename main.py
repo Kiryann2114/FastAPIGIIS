@@ -91,7 +91,6 @@ async def chek_uins():
                     'uin': uin
                 }
                 session.get('https://probpalata.gov.ru', timeout=5)
-                print(session.cookies)
                 response = session.post(
                     f"https://probpalata.gov.ru/check-uin/",
                     data=data,
