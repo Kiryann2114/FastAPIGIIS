@@ -78,10 +78,8 @@ async def check_uin_with_selenium(uin):
         # Переходим на страницу
         driver.get("https://probpalata.gov.ru/check-uin")
 
-        print("Захожу на страницу")
         # Ждем загрузки страницы и находим поле для ввода UIN
-        wait = WebDriverWait(driver, 10)
-        print("Зашёл")
+        wait = WebDriverWait(driver, 3)
 
         # Ищем поле ввода UIN (возможно, нужно уточнить селектор)
         uin_input = wait.until(
@@ -91,7 +89,6 @@ async def check_uin_with_selenium(uin):
         # Вводим UIN
         uin_input.clear()
         uin_input.send_keys(uin)
-        print("Ввёл uin")
 
         # Находим и нажимаем кнопку проверки (возможно, нужно уточнить селектор)
         check_button = wait.until(
@@ -100,18 +97,19 @@ async def check_uin_with_selenium(uin):
         check_button.click()
 
         print("Прогружаю результат")
-        # Ждем загрузки результатов
-        wait.until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, ".check-result-row__value"))
-        )
-        print(".check - result - row__value  прогрузился")
+        try:
+            # Ждем загрузки результатов
+            wait.until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".check-result-row__value"))
+            )
+        except:
+            print("Прогружаю снова")
+            driver.refresh()
 
-        print("начинаю парсить")
         # Парсим результаты
         soup = BeautifulSoup(driver.page_source, 'html.parser')
         data = [p.text.strip() for p in soup.find_all('p', class_='check-result-row__value') if p.text.strip()]
 
-        print(data)
         if len(data) >= 5:
             if data[5] == "Продано":
                 cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {uin}")
