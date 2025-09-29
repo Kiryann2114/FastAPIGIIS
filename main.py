@@ -64,8 +64,16 @@ async def chek_uins():
             uins = cursor.fetchall()
             for uin in uins:
                 uin = uin[0]
-                response = requests.get(f"https://probpalata.gov.ru/check-uin/?action=check&uin={uin}", headers=headers,
-                                        timeout=10)
+                data = {
+                    'action': 'check',
+                    'uin': uin
+                }
+                response = requests.post(
+                    f"https://probpalata.gov.ru/check-uin/",
+                    data=data,
+                    headers=headers,
+                    timeout=10
+                )
                 response.raise_for_status()
                 soup = BeautifulSoup(response.text, 'html.parser')
                 data = [p.text.strip() for p in soup.find_all('p', class_='check-result-row__value') if p.text.strip()]
