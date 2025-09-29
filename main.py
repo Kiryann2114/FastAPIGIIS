@@ -49,7 +49,11 @@ def GetUINStatus():
 
 headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.5',
+    'Accept-Encoding': 'gzip, deflate',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
     'Host': 'probpalata.gov.ru',
     'Referer': 'https://probpalata.gov.ru/',
     'Origin': 'https://probpalata.gov.ru',
@@ -68,10 +72,12 @@ async def chek_uins():
                     'action': 'check',
                     'uin': uin
                 }
-                response = requests.post(
+                session = requests.Session()
+                session.headers.update(headers)
+                session.get('https://example.com')
+                response = session.post(
                     f"https://probpalata.gov.ru/check-uin/",
                     data=data,
-                    headers=headers,
                     timeout=10
                 )
                 response.raise_for_status()
