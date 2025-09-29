@@ -21,7 +21,7 @@ cursor = conn.cursor()
 def setup_driver():
     """Настройка и создание драйвера Chrome"""
     chrome_options = Options()
-    chrome_options.add_argument("--headless")  # Фоновый режим
+    #chrome_options.add_argument("--headless")  # Фоновый режим
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
