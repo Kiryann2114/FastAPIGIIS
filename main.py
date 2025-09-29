@@ -1,16 +1,38 @@
 import uvicorn
 import sqlite3
 from pydantic import BaseModel
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI
 import asyncio
 from contextlib import asynccontextmanager
-import requests
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.service import Service
 from bs4 import BeautifulSoup
 import hashlib
 
-
 conn = sqlite3.connect("DBUin.db")
 cursor = conn.cursor()
+
+
+def setup_driver():
+    """Настройка и создание драйвера Chrome"""
+    chrome_options = Options()
+    #chrome_options.add_argument("--headless")  # Фоновый режим
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument(
+        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36")
+
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+    return driver
+
 
 def SetUIN(Uins):
     try:
@@ -47,73 +69,78 @@ def GetUINStatus():
     return arr_uin
 
 
-def create_session_with_headers():
-    session = requests.Session()
+async def check_uin_with_selenium(uin):
+    """Проверка UIN с использованием Selenium"""
+    driver = None
+    try:
+        driver = setup_driver()
 
-    headers = {
-        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-        'accept-encoding': 'gzip, deflate, br, zstd',
-        'accept-language': 'ru,en;q=0.9',
-        'cache-control': 'no-cache',
-        'connection': 'keep-alive',
-        'content-type': 'application/x-www-form-urlencoded',
-        'host': 'probpalata.gov.ru',
-        'origin': 'https://probpalata.gov.ru',
-        'pragma': 'no-cache',
-        'referer': 'https://probpalata.gov.ru/',
-        'sec-ch-ua': '"Not)A;Brand";v="8", "Chromium";v="138", "YaBrowser";v="25.8", "Yowser";v="2.5"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"Windows"',
-        'sec-fetch-dest': 'document',
-        'sec-fetch-mode': 'navigate',
-        'sec-fetch-site': 'same-origin',
-        'sec-fetch-user': '?1',
-        'upgrade-insecure-requests': '1',
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36'
+        # Переходим на страницу
+        driver.get("https://probpalata.gov.ru/check-uin")
 
-    }
+        # Ждем загрузки страницы и находим поле для ввода UIN
+        wait = WebDriverWait(driver, 10)
 
-    session.headers.update(headers)
-    return session
+        # Ищем поле ввода UIN (возможно, нужно уточнить селектор)
+        uin_input = wait.until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='uin']"))
+        )
 
-session = create_session_with_headers()
-session.get('https://probpalata.gov.ru', timeout=5)
+        # Вводим UIN
+        uin_input.clear()
+        uin_input.send_keys(uin)
+
+        # Находим и нажимаем кнопку проверки (возможно, нужно уточнить селектор)
+        check_button = wait.until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit'][class='button form-row__button']"))
+        )
+        check_button.click()
+
+        # Ждем загрузки результатов
+        wait.until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, ".check-result-row__value"))
+        )
+
+        # Парсим результаты
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        data = [p.text.strip() for p in soup.find_all('p', class_='check-result-row__value') if p.text.strip()]
+
+        if len(data) >= 5:
+            if data[5] == "Продано":
+                cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {uin}")
+                if cursor.fetchone()[0] > 0:
+                    cursor.execute(
+                        f"UPDATE UINs SET UIN = '{uin}', status = true WHERE UIN = '{uin}'")
+                    conn.commit()
+                print(f"Статус UIN {uin}: Продано")
+                return True
+            else:
+                print(f"Статус UIN {uin}: Не Продано")
+                return False
+        else:
+            print(f"Не удалось проверить UIN: {uin}")
+            return False
+
+    except Exception as e:
+        print(f"Ошибка при проверке UIN {uin}: {e}")
+        return False
+    finally:
+        if driver:
+            driver.quit()
+
 
 async def chek_uins():
+    """Основная функция проверки UIN"""
     while True:
         try:
             print("Получаю данные из БД")
             cursor.execute("SELECT UIN FROM UINs WHERE status = false")
             uins = cursor.fetchall()
+
             for uin in uins:
                 uin = uin[0]
-                data = {
-                    'action': 'check',
-                    'uin': uin
-                }
+                await check_uin_with_selenium(uin)  # Пауза между проверками
 
-                response = session.post(
-                    f"https://probpalata.gov.ru/check-uin/",
-                    data=data,
-                    timeout=10
-                )
-                response.raise_for_status()
-                soup = BeautifulSoup(response.text, 'html.parser')
-                data = [p.text.strip() for p in soup.find_all('p', class_='check-result-row__value') if p.text.strip()]
-
-                if len(data) >= 5:
-                    if data[5] == "Продано":
-                        cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {uin}")
-                        if cursor.fetchone()[0] > 0:
-                            cursor.execute(
-                                f"UPDATE UINs SET UIN = '{uin}', status = true WHERE UIN = '{uin}'")
-                            conn.commit()
-                        print(f"Статус UIN {uin}: Продано")
-                    else:
-                        print(f"Статус UIN {uin}: Не Продано")
-                else:
-                    print(f"Не удалось проверить UIN: {uin}")
-                await asyncio.sleep(10)
         except Exception as e:
             print(f"Ошибка в обработке UIN: {e}")
 
@@ -130,6 +157,7 @@ app = FastAPI(lifespan=lifespan)
 def hash_password(password):
     return hashlib.sha256(password.encode('utf-8')).hexdigest()
 
+
 def check_user(login, password):
     cursor.execute(f"SELECT COUNT(*) FROM account WHERE login = '{login}' and password = '{hash_password(password)}'")
     if cursor.fetchone()[0] > 0:
@@ -142,6 +170,7 @@ class ModelGet(BaseModel):
     UINs: list[str]
     login: str
     password: str
+
 
 @app.post("/api/SetUIN")
 async def APISetUIN(body: ModelGet):
@@ -170,4 +199,4 @@ async def APIGetUINStatus():
         host="0.0.0.0",
         port=8000,
         reload=True
-        )
+    )
