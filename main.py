@@ -19,40 +19,19 @@ cursor = conn.cursor()
 
 
 def setup_driver():
-    """Настройка драйвера для сервера Ubuntu"""
+    """Настройка и создание драйвера Chrome"""
     chrome_options = Options()
-
-    # Основные опции для сервера
-    chrome_options.add_argument("--headless=new")  # Новый headless режим
+    chrome_options.add_argument("--headless")  # Фоновый режим
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument("--disable-extensions")
-    chrome_options.add_argument("--disable-plugins")
-    chrome_options.add_argument("--disable-images")  # Ускорит работу
-    chrome_options.add_argument("--blink-settings=imagesEnabled=false")
-
-    # Опции для обхода защиты
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option('useAutomationExtension', False)
-
-    # User agent
     chrome_options.add_argument(
-        "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36")
 
-    try:
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=chrome_options)
-
-        # Скрываем автоматизацию
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-
-        return driver
-    except Exception as e:
-        print(f"Ошибка создания драйвера: {e}")
-        raise
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+    return driver
 
 
 def SetUIN(Uins):
@@ -97,25 +76,10 @@ async def check_uin_with_selenium(uin):
         driver = setup_driver()
 
         # Переходим на страницу
-        driver.get("https://probpalata.gov.ru/check-uin")
+        driver.get(f"https://probpalata.gov.ru/check-uin/?action=check&uin={uin}")
 
         # Ждем загрузки страницы и находим поле для ввода UIN
         wait = WebDriverWait(driver, 10)
-
-        # Ищем поле ввода UIN (возможно, нужно уточнить селектор)
-        uin_input = wait.until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='uin']"))
-        )
-
-        # Вводим UIN
-        uin_input.clear()
-        uin_input.send_keys(uin)
-
-        # Находим и нажимаем кнопку проверки (возможно, нужно уточнить селектор)
-        check_button = wait.until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit'][class='button form-row__button']"))
-        )
-        check_button.click()
 
         # Ждем загрузки результатов
         wait.until(
