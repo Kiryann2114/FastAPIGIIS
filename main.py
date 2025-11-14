@@ -7,10 +7,38 @@ from contextlib import asynccontextmanager
 import requests
 from bs4 import BeautifulSoup
 import hashlib
+import random
 
 
 conn = sqlite3.connect("DBUin.db")
 cursor = conn.cursor()
+
+
+def load_proxies():
+    try:
+        with open("proxy.txt", "r") as file:
+            proxies = [line.strip() for line in file if line.strip()]
+        return proxies
+    except FileNotFoundError:
+        print("Файл proxy.txt не найден.")
+        return []
+    except Exception as e:
+        print(f"Ошибка при загрузке прокси: {e}")
+        return []
+
+
+def get_random_proxy(proxies):
+    if not proxies:
+        return None
+    proxy_str = random.choice(proxies)
+    user_pass, ip_port = proxy_str.split("@")
+    user, password = user_pass.split(":")
+    ip, port = ip_port.split(":")
+    return {
+        "http": f"http://{user}:{password}@{ip}:{port}",
+        "https": f"http://{user}:{password}@{ip}:{port}"
+    }
+
 
 def SetUIN(Uins):
     try:
@@ -47,7 +75,17 @@ def GetUINStatus():
     return arr_uin
 
 
+def GetAllUINs():
+    cursor.execute(f'SELECT * FROM UINs')
+    all_uin = cursor.fetchall()
+    arr_uin = []
+    for uin in all_uin:
+        arr_uin.append({'uin':uin[0], 'status':uin[1]})
+    return arr_uin
+
+
 async def chek_uins():
+    proxies = load_proxies()
     while True:
         try:
             print("Получаю данные из БД")
@@ -55,54 +93,63 @@ async def chek_uins():
             uins = cursor.fetchall()
             for uin in uins:
                 uin = uin[0]
-                data = {
-                    'action': 'check',
-                    'uin': uin
-                }
-                headers = {
-                    'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-                    'accept-encoding': 'gzip, deflate, br, zstd',
-                    'accept-language': 'ru,en;q=0.9',
-                    'cache-control': 'no-cache',
-                    'connection': 'keep-alive',
-                    'content-type': 'application/x-www-form-urlencoded',
-                    'host': 'probpalata.gov.ru',
-                    'origin': 'https://probpalata.gov.ru',
-                    'pragma': 'no-cache',
-                    'referer': 'https://probpalata.gov.ru/',
-                    'sec-ch-ua': '"Not)A;Brand";v="8", "Chromium";v="138", "YaBrowser";v="25.8", "Yowser";v="2.5"',
-                    'sec-ch-ua-mobile': '?0',
-                    'sec-ch-ua-platform': '"Windows"',
-                    'sec-fetch-dest': 'document',
-                    'sec-fetch-mode': 'navigate',
-                    'sec-fetch-site': 'same-origin',
-                    'sec-fetch-user': '?1',
-                    'upgrade-insecure-requests': '1',
-                    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36'
-                }
-                response = requests.post(
-                    f"https://probpalata.gov.ru/check-uin/",
-                    data=data,
-                    headers=headers,
-                    timeout=10
-                )
-                response.raise_for_status()
-                soup = BeautifulSoup(response.text, 'html.parser')
-                data = [p.text.strip() for p in soup.find_all('p', class_='check-result-row__value') if p.text.strip()]
+                while True:
+                    data = {
+                        'action': 'check',
+                        'uin': uin
+                    }
+                    headers = {
+                        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                        'accept-encoding': 'gzip, deflate, br, zstd',
+                        'accept-language': 'ru,en;q=0.9',
+                        'cache-control': 'no-cache',
+                        'connection': 'keep-alive',
+                        'content-type': 'application/x-www-form-urlencoded',
+                        'host': 'probpalata.gov.ru',
+                        'origin': 'https://probpalata.gov.ru',
+                        'pragma': 'no-cache',
+                        'referer': 'https://probpalata.gov.ru/',
+                        'sec-ch-ua': '"Not)A;Brand";v="8", "Chromium";v="138", "YaBrowser";v="25.8", "Yowser";v="2.5"',
+                        'sec-ch-ua-mobile': '?0',
+                        'sec-ch-ua-platform': '"Windows"',
+                        'sec-fetch-dest': 'document',
+                        'sec-fetch-mode': 'navigate',
+                        'sec-fetch-site': 'same-origin',
+                        'sec-fetch-user': '?1',
+                        'upgrade-insecure-requests': '1',
+                        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36'
+                    }
+                    proxy = get_random_proxy(proxies)
+                    try:
+                        response = requests.post(
+                            f"https://probpalata.gov.ru/check-uin/",
+                            data=data,
+                            headers=headers,
+                            timeout=10,
+                            proxies=proxy
+                        )
+                        response.raise_for_status()
+                        soup = BeautifulSoup(response.text, 'html.parser')
+                        data = [p.text.strip() for p in soup.find_all('p', class_='check-result-row__value') if p.text.strip()]
 
-                if len(data) >= 5:
-                    if data[5] == "Продано":
-                        cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {uin}")
-                        if cursor.fetchone()[0] > 0:
-                            cursor.execute(
-                                f"UPDATE UINs SET UIN = '{uin}', status = true WHERE UIN = '{uin}'")
-                            conn.commit()
-                        print(f"Статус UIN {uin}: Продано")
-                    else:
-                        print(f"Статус UIN {uin}: Не Продано")
-                else:
-                    print(f"Не удалось проверить UIN: {uin}")
-                await asyncio.sleep(50)
+                        if len(data) >= 5:
+                            if data[5] == "Продано":
+                                cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {uin}")
+                                if cursor.fetchone()[0] > 0:
+                                    cursor.execute(
+                                        f"UPDATE UINs SET UIN = '{uin}', status = true WHERE UIN = '{uin}'")
+                                    conn.commit()
+                                print(f"Статус UIN {uin}: Продано")
+                            else:
+                                print(f"Статус UIN {uin}: Не Продано")
+                            break
+                        else:
+                            print(f"Не удалось проверить UIN: {uin}")
+                            await asyncio.sleep(250)
+                    except requests.exceptions.RequestException as e:
+                        print(f"Ошибка запроса через прокси: {e}. Попробую следующий прокси...")
+                    await asyncio.sleep(1)
+
         except Exception as e:
             print(f"Ошибка в обработке UIN: {e}")
 
@@ -153,10 +200,15 @@ async def APIGetUINStatus():
     return GetUINStatus()
 
 
-#if __name__ == '__main__':
+@app.get("/api/GetAllUINs")
+async def APIGetAllUINs():
+    return GetAllUINs()
+
+
+if __name__ == '__main__':
     uvicorn.run(
         'main:app',
         host="0.0.0.0",
         port=8000,
         reload=True
-        )
+    )
