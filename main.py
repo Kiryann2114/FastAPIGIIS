@@ -77,6 +77,9 @@ async def chek_uins():
             print("Получаю данные из БД")
             cursor.execute("SELECT UIN FROM UINs WHERE NOT (status = 'продан')")
             uins = cursor.fetchall()
+            if len(uins) == 0:
+                print("Нет данных для проверки")
+                break
             for uin in uins:
                 uin = uin[0]
                 while True:
