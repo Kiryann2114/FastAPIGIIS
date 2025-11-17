@@ -92,7 +92,7 @@ async def chek_uins():
     while True:
         try:
             print("Получаю данные из БД")
-            cursor.execute("SELECT UIN FROM UINs WHERE NOT (status = 'продан')")
+            cursor.execute("SELECT UIN FROM UINs WHERE NOT (status = 'Продан')")
             uins = cursor.fetchall()
             if len(uins) == 0:
                 print("Нет данных для проверки")
@@ -143,14 +143,14 @@ async def chek_uins():
                                 cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {uin}")
                                 if cursor.fetchone()[0] > 0:
                                     cursor.execute(
-                                        f"UPDATE UINs SET UIN = '{uin}', status = 'продан' WHERE UIN = '{uin}'")
+                                        f"UPDATE UINs SET UIN = '{uin}', status = 'Продан' WHERE UIN = '{uin}'")
                                     conn.commit()
                                 print(f"Статус UIN {uin}: Продано")
                             else:
                                 cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {uin}")
                                 if cursor.fetchone()[0] > 0:
                                     cursor.execute(
-                                        f"UPDATE UINs SET UIN = '{uin}', status = 'не продан' WHERE UIN = '{uin}'")
+                                        f"UPDATE UINs SET UIN = '{uin}', status = 'НеПродан' WHERE UIN = '{uin}'")
                                     conn.commit()
                                 print(f"Статус UIN {uin}: Не Продано")
                             break
