@@ -66,7 +66,7 @@ def GetUIN(Uins):
     arr_uin = []
     for uin in Uins:
         cursor.execute(f"SELECT * FROM UINs WHERE UIN = '{uin}'")
-        uin_fetch = cursor.fetchall()
+        uin_fetch = cursor.fetchall()[0]
         arr_uin.append({'uin':uin_fetch[0], 'status':uin_fetch[1]})
     return arr_uin
 
