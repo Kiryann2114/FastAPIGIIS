@@ -26,7 +26,6 @@ def load_proxies():
         print(f"Ошибка при загрузке прокси: {e}")
         return []
 
-
 def get_random_proxy(proxies):
     if not proxies:
         return None
@@ -39,14 +38,13 @@ def get_random_proxy(proxies):
         "https": f"http://{user}:{password}@{ip}:{port}"
     }
 
-
 def SetUIN(Uins):
     try:
         for UIN in Uins:
             cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {UIN}")
             if cursor.fetchone()[0] > 0:
                 cursor.execute(
-                    f"UPDATE UINs SET UIN = '{UIN}', status = false WHERE UIN = '{UIN}'")
+                    f"UPDATE UINs SET UIN = '{UIN}', status = 'проверка' WHERE UIN = '{UIN}'")
             else:
                 cursor.execute(
                     f"INSERT INTO UINs (UIN) VALUES ('{UIN}')")
@@ -55,41 +53,29 @@ def SetUIN(Uins):
     except:
         return "Не удалось загрузить данные"
 
-
 def DeleteUIN(Uins):
     try:
         for UIN in Uins:
-            cursor.execute(f"DELETE FROM UINs WHERE UIN = '{UIN}' and status = 1")
+            cursor.execute(f"DELETE FROM UINs WHERE UIN = '{UIN}'")
         conn.commit()
         return "Данные успешно удалены"
     except:
         return "Не удалось удалить данные"
 
-
 def GetUINStatus():
-    cursor.execute(f'SELECT UIN FROM UINs WHERE status = 1')
-    all_uin = cursor.fetchall()
-    arr_uin = []
-    for uin in all_uin:
-        arr_uin.append(uin[0])
-    return arr_uin
-
-
-def GetAllUINs():
-    cursor.execute(f'SELECT * FROM UINs')
+    cursor.execute(f"SELECT UIN FROM UINs WHERE NOT (status = 'проверка')")
     all_uin = cursor.fetchall()
     arr_uin = []
     for uin in all_uin:
         arr_uin.append({'uin':uin[0], 'status':uin[1]})
     return arr_uin
 
-
 async def chek_uins():
     proxies = load_proxies()
     while True:
         try:
             print("Получаю данные из БД")
-            cursor.execute("SELECT UIN FROM UINs WHERE status = false")
+            cursor.execute("SELECT UIN FROM UINs WHERE NOT (status = 'продан')")
             uins = cursor.fetchall()
             for uin in uins:
                 uin = uin[0]
@@ -137,10 +123,15 @@ async def chek_uins():
                                 cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {uin}")
                                 if cursor.fetchone()[0] > 0:
                                     cursor.execute(
-                                        f"UPDATE UINs SET UIN = '{uin}', status = true WHERE UIN = '{uin}'")
+                                        f"UPDATE UINs SET UIN = '{uin}', status = 'продан' WHERE UIN = '{uin}'")
                                     conn.commit()
                                 print(f"Статус UIN {uin}: Продано")
                             else:
+                                cursor.execute(f"SELECT COUNT(*) FROM UINs WHERE UIN = {uin}")
+                                if cursor.fetchone()[0] > 0:
+                                    cursor.execute(
+                                        f"UPDATE UINs SET UIN = '{uin}', status = 'не продан' WHERE UIN = '{uin}'")
+                                    conn.commit()
                                 print(f"Статус UIN {uin}: Не Продано")
                             break
                         else:
@@ -198,11 +189,6 @@ async def APIDeleteUIN(body: ModelGet):
 @app.get("/api/GetUINStatus")
 async def APIGetUINStatus():
     return GetUINStatus()
-
-
-@app.get("/api/GetAllUINs")
-async def APIGetAllUINs():
-    return GetAllUINs()
 
 
 if __name__ == '__main__':
