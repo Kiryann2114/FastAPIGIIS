@@ -62,6 +62,13 @@ def DeleteUIN(Uins):
     except:
         return "Не удалось удалить данные"
 
+def GetUIN(Uins):
+    arr_uin = []
+    for uin in Uins:
+        cursor.execute(f"SELECT * FROM UINs WHERE UIN = '{uin}'")
+        arr_uin.append(cursor.fetchall())
+    return arr_uin
+
 def GetUINStatus():
     cursor.execute(f"SELECT UIN FROM UINs WHERE NOT (status = 'проверка')")
     all_uin = cursor.fetchall()
@@ -193,6 +200,14 @@ async def APISetUIN(body: ModelGet):
 async def APIDeleteUIN(body: ModelGet):
     if check_user(body.login, body.password):
         return DeleteUIN(body.UINs)
+    else:
+        return 505
+
+
+@app.post("/api/GetUIN")
+async def APIGetUIN(body: ModelGet):
+    if check_user(body.login, body.password):
+        return GetUIN(body.UINs)
     else:
         return 505
 
