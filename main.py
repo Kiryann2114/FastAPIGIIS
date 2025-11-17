@@ -70,6 +70,14 @@ def GetUINStatus():
         arr_uin.append({'uin':uin[0], 'status':uin[1]})
     return arr_uin
 
+def GetAllUINs():
+    cursor.execute(f"SELECT * FROM UINs")
+    all_uin = cursor.fetchall()
+    arr_uin = []
+    for uin in all_uin:
+        arr_uin.append({'uin':uin[0], 'status':uin[1]})
+    return arr_uin
+
 async def chek_uins():
     proxies = load_proxies()
     while True:
@@ -192,6 +200,10 @@ async def APIDeleteUIN(body: ModelGet):
 @app.get("/api/GetUINStatus")
 async def APIGetUINStatus():
     return GetUINStatus()
+
+@app.get("/api/GetAllUINs")
+async def APIGetAllUINs():
+    return GetAllUINs()
 
 
 if __name__ == '__main__':
