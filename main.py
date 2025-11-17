@@ -96,7 +96,7 @@ async def chek_uins():
             uins = cursor.fetchall()
             if len(uins) == 0:
                 print("Нет данных для проверки")
-                break
+                await asyncio.sleep(10)
             for uin in uins:
                 uin = uin[0]
                 while True:
