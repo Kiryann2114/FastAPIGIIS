@@ -180,29 +180,18 @@ def update_uin_status(uin, status):
     conn.close()
 
 
-def get_uins_for_checking_batch(limit=100, offset=0):
-    """Получить батч UINов для проверки (исключая 'Продан') с пагинацией"""
+def get_uins_for_checking_batch(limit=100):
+    """Получить батч UINов для проверки (исключая 'Продан'), сортируя по времени последней проверки"""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
-                   SELECT UIN
-                   FROM UINs
-                   WHERE status != 'Продан'
-                   ORDER BY last_checked ASC
-                       LIMIT ?
-                   OFFSET ?
-                   ''', (limit, offset))
+        SELECT UIN
+        FROM UINs
+        WHERE status != 'Продан'
+        ORDER BY last_checked ASC
+        LIMIT ?
+    ''', (limit,))
     result = [row[0] for row in cursor.fetchall()]
-    conn.close()
-    return result
-
-
-def get_total_uins_count():
-    """Получить общее количество UINов для проверки"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM UINs WHERE status != 'Продан'")
-    result = cursor.fetchone()[0]
     conn.close()
     return result
 
@@ -361,7 +350,7 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
 
                     if not current_status or current_status != 'Продан':
                         # При ошибке сбрасываем счетчик запросов для текущего прокси
-                        if has_proxies and available_proxies:
+                        if has_proxies and 'current_proxy' in locals():
                             current_proxy.request_count = 0
                             current_proxy.cooldown_until = current_time + 30  # Отдых 30 сек при ошибке
                             print(f"Прокси {current_proxy.get_ip()} отправлен на отдых из-за ошибки")
@@ -387,13 +376,12 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
 chek_uins_task: Optional[asyncio.Task] = None
 shutdown_event: Optional[asyncio.Event] = None
 proxy_hash: str = ""
-current_batch_offset = 0
 BATCH_SIZE = 100
 
 
 # === Основной процесс проверки UIN ===
 async def chek_uins(shutdown: asyncio.Event):
-    global proxy_hash, current_batch_offset
+    global proxy_hash
     queue = asyncio.Queue()
     tasks = []
 
@@ -433,18 +421,15 @@ async def chek_uins(shutdown: asyncio.Event):
         try:
             # Если очередь почти пустая, загружаем следующую партию UIN
             if queue.qsize() < BATCH_SIZE // 2:
-                uins = await to_thread(get_uins_for_checking_batch, BATCH_SIZE, current_batch_offset)
+                uins = await to_thread(get_uins_for_checking_batch, BATCH_SIZE)
 
                 if uins:
-                    print(f"Загружаем батч UINов: {len(uins)} записей, offset={current_batch_offset}")
+                    print(f"Загружаем батч UINов: {len(uins)} записей")
                     for uin in uins:
                         await queue.put(uin)
-
-                    current_batch_offset += len(uins)
                 else:
-                    # Если дошли до конца, начинаем сначала
-                    print("Достигнут конец базы UINов, начинаем сначала...")
-                    current_batch_offset = 0
+                    print("Нет UINов для проверки (все, возможно, проданы)")
+                    await asyncio.sleep(10)
 
         except Exception as e:
             print(f"Ошибка при чтении UIN из БД: {e}")
@@ -516,6 +501,7 @@ async def APIGetAllUINs():
     return GetAllUINs()
 
 
+# Запуск сервера
 #if __name__ == '__main__':
     uvicorn.run(
         'main:app',
