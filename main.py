@@ -29,34 +29,18 @@ def init_db():
     cursor.execute('''
                    CREATE TABLE IF NOT EXISTS UINs
                    (
-                       UIN
-                       TEXT
-                       PRIMARY
-                       KEY,
-                       status
-                       TEXT
-                       DEFAULT
-                       'Проверка',
-                       cheker
-                       INTEGER
-                       DEFAULT
-                       -
-                       1,
-                       last_checked
-                       TIMESTAMP
-                       DEFAULT
-                       CURRENT_TIMESTAMP
+                       UIN TEXT PRIMARY KEY,
+                       status TEXT
+                       DEFAULT 'Проверка',
+                       cheker INTEGER DEFAULT -1,
+                       last_checked TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                    )
                    ''')
     cursor.execute('''
                    CREATE TABLE IF NOT EXISTS account
                    (
-                       login
-                       TEXT
-                       PRIMARY
-                       KEY,
-                       password
-                       TEXT
+                       login TEXT PRIMARY KEY,
+                       password TEXT
                    )
                    ''')
     # Добавим тестового пользователя: login=test, password=test
