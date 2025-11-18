@@ -13,6 +13,7 @@ import aiohttp
 from asyncio import to_thread
 import time
 
+
 # === Настройка БД с поддержкой асинхронного доступа ===
 # Создаем соединение с БД
 def get_db_connection():
@@ -20,30 +21,53 @@ def get_db_connection():
     conn.execute('PRAGMA journal_mode=WAL;')
     return conn
 
+
 # === Создаём таблицы при старте, если их нет ===
 def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS UINs (
-            UIN TEXT PRIMARY KEY,
-            status TEXT DEFAULT 'Проверка',
-            cheker INTEGER DEFAULT -1
-        )
-    ''')
+                   CREATE TABLE IF NOT EXISTS UINs
+                   (
+                       UIN
+                       TEXT
+                       PRIMARY
+                       KEY,
+                       status
+                       TEXT
+                       DEFAULT
+                       'Проверка',
+                       cheker
+                       INTEGER
+                       DEFAULT
+                       -
+                       1,
+                       last_checked
+                       TIMESTAMP
+                       DEFAULT
+                       CURRENT_TIMESTAMP
+                   )
+                   ''')
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS account (
-            login TEXT PRIMARY KEY,
-            password TEXT
-        )
-    ''')
+                   CREATE TABLE IF NOT EXISTS account
+                   (
+                       login
+                       TEXT
+                       PRIMARY
+                       KEY,
+                       password
+                       TEXT
+                   )
+                   ''')
     # Добавим тестового пользователя: login=test, password=test
     cursor.execute("INSERT OR IGNORE INTO account (login, password) VALUES (?, ?)",
                    ("admin", hashlib.sha256("h6mCbIA0GN".encode()).hexdigest()))
     conn.commit()
     conn.close()
 
+
 init_db()
+
 
 # === Загрузка прокси и хэширование содержимого ===
 def load_proxies():
@@ -57,6 +81,7 @@ def load_proxies():
         print(f"Ошибка при загрузке прокси: {e}")
         return []
 
+
 def get_proxy_hash():
     try:
         if not os.path.exists("proxy.txt"):
@@ -67,6 +92,7 @@ def get_proxy_hash():
         print(f"Ошибка хэширования proxy.txt: {e}")
         return ""
 
+
 # === Основные функции работы с UIN ===
 def SetUIN(Uins):
     try:
@@ -75,7 +101,8 @@ def SetUIN(Uins):
         for UIN in Uins:
             cursor.execute("SELECT COUNT(*) FROM UINs WHERE UIN = ?", (UIN,))
             if cursor.fetchone()[0] > 0:
-                cursor.execute("UPDATE UINs SET status = 'проверка' WHERE UIN = ?", (UIN,))
+                cursor.execute("UPDATE UINs SET status = 'проверка', last_checked = CURRENT_TIMESTAMP WHERE UIN = ?",
+                               (UIN,))
             else:
                 cursor.execute("INSERT INTO UINs (UIN) VALUES (?)", (UIN,))
         conn.commit()
@@ -84,6 +111,7 @@ def SetUIN(Uins):
     except Exception as e:
         print(f"Ошибка при добавлении UIN: {e}")
         return "Не удалось загрузить данные"
+
 
 def DeleteUIN(Uins):
     try:
@@ -98,6 +126,7 @@ def DeleteUIN(Uins):
         print(f"Ошибка при удалении UIN: {e}")
         return "Не удалось удалить данные"
 
+
 def GetUIN(Uins):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -110,6 +139,7 @@ def GetUIN(Uins):
     conn.close()
     return arr_uin
 
+
 def GetUINStatus():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -117,6 +147,7 @@ def GetUINStatus():
     result = [{'uin': row[0], 'status': row[1]} for row in cursor.fetchall()]
     conn.close()
     return result
+
 
 def GetAllUINs():
     conn = get_db_connection()
@@ -126,9 +157,11 @@ def GetAllUINs():
     conn.close()
     return result
 
+
 # === Hash и авторизация ===
 def hash_password(password):
     return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
 
 def check_user(login, password):
     conn = get_db_connection()
@@ -139,6 +172,7 @@ def check_user(login, password):
     conn.close()
     return result
 
+
 def get_uin_status_from_db(uin):
     """Получить статус UIN из БД"""
     conn = get_db_connection()
@@ -148,22 +182,42 @@ def get_uin_status_from_db(uin):
     conn.close()
     return result[0] if result else None
 
+
 def update_uin_status(uin, status):
     """Обновить статус UIN в БД"""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("UPDATE UINs SET status = ? WHERE UIN = ?", (status, uin))
+    cursor.execute("UPDATE UINs SET status = ?, last_checked = CURRENT_TIMESTAMP WHERE UIN = ?", (status, uin))
     conn.commit()
     conn.close()
 
-def get_uins_for_checking():
-    """Получить UINы для проверки (исключая 'Продан')"""
+
+def get_uins_for_checking_batch(limit=100, offset=0):
+    """Получить батч UINов для проверки (исключая 'Продан') с пагинацией"""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT UIN FROM UINs WHERE status != 'Продан'")
+    cursor.execute('''
+                   SELECT UIN
+                   FROM UINs
+                   WHERE status != 'Продан'
+                   ORDER BY last_checked ASC
+                       LIMIT ?
+                   OFFSET ?
+                   ''', (limit, offset))
     result = [row[0] for row in cursor.fetchall()]
     conn.close()
     return result
+
+
+def get_total_uins_count():
+    """Получить общее количество UINов для проверки"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM UINs WHERE status != 'Продан'")
+    result = cursor.fetchone()[0]
+    conn.close()
+    return result
+
 
 # === Воркер: проверяет UIN через очередь, с прокси или без ===
 async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
@@ -340,14 +394,18 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
                 print(f"Воркер {worker_id}: Критическая ошибка: {e}")
                 queue.task_done()
 
+
 # === Глобальные переменные для управления ===
 chek_uins_task: Optional[asyncio.Task] = None
 shutdown_event: Optional[asyncio.Event] = None
 proxy_hash: str = ""
+current_batch_offset = 0
+BATCH_SIZE = 100
+
 
 # === Основной процесс проверки UIN ===
 async def chek_uins(shutdown: asyncio.Event):
-    global proxy_hash
+    global proxy_hash, current_batch_offset
     queue = asyncio.Queue()
     tasks = []
 
@@ -368,7 +426,7 @@ async def chek_uins(shutdown: asyncio.Event):
             proxy_pairs = []
             if current_proxies:
                 for i in range(0, len(current_proxies), 2):
-                    pair = current_proxies[i:i+2]
+                    pair = current_proxies[i:i + 2]
                     if len(pair) == 1:
                         pair.append(current_proxies[i])
                     proxy_pairs.append(pair)
@@ -385,11 +443,21 @@ async def chek_uins(shutdown: asyncio.Event):
             print(f"Перезапущено {len(tasks)} воркеров с {len(current_proxies)} прокси")
 
         try:
-            # ИСКЛЮЧАЕМ UINы со статусом "Продан" из проверки
-            uins = await to_thread(get_uins_for_checking)
-            for uin in uins:
-                if queue.qsize() < 100:
-                    await queue.put(uin)
+            # Если очередь почти пустая, загружаем следующую партию UIN
+            if queue.qsize() < BATCH_SIZE // 2:
+                uins = await to_thread(get_uins_for_checking_batch, BATCH_SIZE, current_batch_offset)
+
+                if uins:
+                    print(f"Загружаем батч UINов: {len(uins)} записей, offset={current_batch_offset}")
+                    for uin in uins:
+                        await queue.put(uin)
+
+                    current_batch_offset += len(uins)
+                else:
+                    # Если дошли до конца, начинаем сначала
+                    print("Достигнут конец базы UINов, начинаем сначала...")
+                    current_batch_offset = 0
+
         except Exception as e:
             print(f"Ошибка при чтении UIN из БД: {e}")
 
@@ -400,6 +468,7 @@ async def chek_uins(shutdown: asyncio.Event):
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
     print("Все воркеры остановлены.")
+
 
 # === FastAPI ===
 class ModelGet(BaseModel):
@@ -421,6 +490,7 @@ async def lifespan(app: FastAPI):
     if chek_uins_task:
         await chek_uins_task
 
+
 app = FastAPI(lifespan=lifespan)
 
 
@@ -431,12 +501,14 @@ async def APISetUIN(body: ModelGet):
     else:
         return 505
 
+
 @app.post("/api/DeleteUIN")
 async def APIDeleteUIN(body: ModelGet):
     if check_user(body.login, body.password):
         return DeleteUIN(body.UINs)
     else:
         return 505
+
 
 @app.post("/api/GetUIN")
 async def APIGetUIN(body: ModelGet):
@@ -445,15 +517,18 @@ async def APIGetUIN(body: ModelGet):
     else:
         return 505
 
+
 @app.get("/api/GetUINStatus")
 async def APIGetUINStatus():
     return GetUINStatus()
+
 
 @app.get("/api/GetAllUINs")
 async def APIGetAllUINs():
     return GetAllUINs()
 
-#if __name__ == '__main__':
+
+if __name__ == '__main__':
     uvicorn.run(
         'main:app',
         host="0.0.0.0",
