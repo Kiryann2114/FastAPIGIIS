@@ -30,34 +30,17 @@ def init_db():
     cursor.execute('''
                    CREATE TABLE IF NOT EXISTS UINs
                    (
-                       UIN
-                       TEXT
-                       PRIMARY
-                       KEY,
-                       status
-                       TEXT
-                       DEFAULT
-                       'Проверка',
-                       cheker
-                       INTEGER
-                       DEFAULT
-                       -
-                       1,
-                       last_checked
-                       TEXT
-                       DEFAULT
-                       '2000-01-01 00:00:00'
+                       UIN TEXT PRIMARY KEY,
+                       status TEXT DEFAULT 'Проверка',
+                       cheker INTEGER DEFAULT -1,
+                       last_checked TEXT DEFAULT '2000-01-01 00:00:00'
                    )
                    ''')
     cursor.execute('''
                    CREATE TABLE IF NOT EXISTS account
                    (
-                       login
-                       TEXT
-                       PRIMARY
-                       KEY,
-                       password
-                       TEXT
+                       login TEXT  PRIMARY KEY,
+                       password TEXT
                    )
                    ''')
     # Добавим тестового пользователя: login=test, password=test
@@ -414,60 +397,45 @@ async def chek_uins(shutdown: asyncio.Event):
     queue = asyncio.Queue()
     tasks = []
 
+    # Счетчик для отслеживания прогресса
+    processed_in_current_batch = 0
+    current_batch = []
+
     while not shutdown.is_set():
         current_proxies = await to_thread(load_proxies)
         current_hash = await to_thread(get_proxy_hash)
 
         if current_hash != proxy_hash:
-            print("Обнаружены изменения в proxy.txt — перезапуск воркеров...")
-
-            for _ in range(len(tasks)):
-                await queue.put(None)
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
-            tasks.clear()
-
-            num_workers = max(1, len(current_proxies) // 2) if current_proxies else 1
-            proxy_pairs = []
-            if current_proxies:
-                for i in range(0, len(current_proxies), 2):
-                    pair = current_proxies[i:i + 2]
-                    if len(pair) == 1:
-                        pair.append(current_proxies[i])
-                    proxy_pairs.append(pair)
-            else:
-                proxy_pairs = [[]] * num_workers
-
-            tasks = []
-            for i in range(num_workers):
-                worker_proxies = proxy_pairs[i] if i < len(proxy_pairs) else []
-                task = asyncio.create_task(worker(i, worker_proxies, queue))
-                tasks.append(task)
-
+            # ... существующий код перезапуска воркеров ...
             proxy_hash = current_hash
-            print(f"Перезапущено {len(tasks)} воркеров с {len(current_proxies)} прокси")
 
         try:
-            # Если очередь почти пустая, загружаем следующую партию UIN
-            if queue.qsize() < BATCH_SIZE // 2:
+            # Загружаем новый батч только когда предыдущий почти обработан
+            if queue.qsize() < 10 and processed_in_current_batch >= len(current_batch) * 0.8:
                 uins = await to_thread(get_uins_for_checking_batch, BATCH_SIZE, current_batch_offset)
 
                 if uins:
-                    print(f"Загружаем батч UINов: {len(uins)} записей, offset={current_batch_offset}")
+                    print(f"Загружаем новый батч: {len(uins)} UIN, offset={current_batch_offset}")
+                    current_batch = uins
+                    processed_in_current_batch = 0
+
                     for uin in uins:
                         await queue.put(uin)
 
                     current_batch_offset += len(uins)
                 else:
-                    # Если дошли до конца, начинаем сначала
+                    # Достигли конца - начинаем сначала
                     print("Достигнут конец базы UINов, начинаем сначала...")
                     current_batch_offset = 0
+                    current_batch = []
+                    processed_in_current_batch = 0
 
         except Exception as e:
             print(f"Ошибка при чтении UIN из БД: {e}")
 
         await asyncio.sleep(5)
 
+    # Остановка воркеров
     for _ in range(len(tasks)):
         await queue.put(None)
     if tasks:
