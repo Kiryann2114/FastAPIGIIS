@@ -12,6 +12,7 @@ from typing import Optional
 import aiohttp
 from asyncio import to_thread
 import time
+from datetime import datetime
 
 
 # === Настройка БД с поддержкой асинхронного доступа ===
@@ -29,18 +30,34 @@ def init_db():
     cursor.execute('''
                    CREATE TABLE IF NOT EXISTS UINs
                    (
-                       UIN TEXT PRIMARY KEY,
-                       status TEXT
-                       DEFAULT 'Проверка',
-                       cheker INTEGER DEFAULT -1,
-                       last_checked TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                       UIN
+                       TEXT
+                       PRIMARY
+                       KEY,
+                       status
+                       TEXT
+                       DEFAULT
+                       'Проверка',
+                       cheker
+                       INTEGER
+                       DEFAULT
+                       -
+                       1,
+                       last_checked
+                       TEXT
+                       DEFAULT
+                       '2000-01-01 00:00:00'
                    )
                    ''')
     cursor.execute('''
                    CREATE TABLE IF NOT EXISTS account
                    (
-                       login TEXT PRIMARY KEY,
-                       password TEXT
+                       login
+                       TEXT
+                       PRIMARY
+                       KEY,
+                       password
+                       TEXT
                    )
                    ''')
     # Добавим тестового пользователя: login=test, password=test
@@ -82,13 +99,15 @@ def SetUIN(Uins):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         for UIN in Uins:
             cursor.execute("SELECT COUNT(*) FROM UINs WHERE UIN = ?", (UIN,))
             if cursor.fetchone()[0] > 0:
-                cursor.execute("UPDATE UINs SET status = 'проверка', last_checked = CURRENT_TIMESTAMP WHERE UIN = ?",
-                               (UIN,))
+                cursor.execute("UPDATE UINs SET status = 'проверка', last_checked = ? WHERE UIN = ?",
+                               (current_time, UIN))
             else:
-                cursor.execute("INSERT INTO UINs (UIN) VALUES (?)", (UIN,))
+                cursor.execute("INSERT INTO UINs (UIN, last_checked) VALUES (?, ?)",
+                               (UIN, current_time))
         conn.commit()
         conn.close()
         return "Данные успешно загружены"
@@ -171,7 +190,9 @@ def update_uin_status(uin, status):
     """Обновить статус UIN в БД"""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("UPDATE UINs SET status = ?, last_checked = CURRENT_TIMESTAMP WHERE UIN = ?", (status, uin))
+    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    cursor.execute("UPDATE UINs SET status = ?, last_checked = ? WHERE UIN = ?",
+                   (status, current_time, uin))
     conn.commit()
     conn.close()
 
