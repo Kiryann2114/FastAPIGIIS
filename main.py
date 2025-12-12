@@ -331,12 +331,8 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
 
                         text = await response.text()
                         soup = BeautifulSoup(text, 'html.parser')
-                        values = [p.text.strip() for p in soup.find_all('p', class_='check-result-row__value') if
-                                  p.text.strip()]
-
-                        status = "НеПродан"
-                        if len(values) >= 6:
-                            status = "Продан" if values[5] == "Продано" else "НеПродан"
+                        target = soup.find('p', class_='check-result-row__value', string=lambda s: s and 'Продано' in s)
+                        status = "Продан" if target else "НеПродан"
 
                         # Обновление БД в отдельном потоке
                         await to_thread(update_uin_status, uin, status)
