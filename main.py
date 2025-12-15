@@ -394,7 +394,7 @@ async def chek_uins(shutdown: asyncio.Event):
                 await asyncio.gather(*tasks, return_exceptions=True)
             tasks.clear()
 
-            num_workers = max(1, len(current_proxies) // 5) if current_proxies else 1
+            num_workers = max(1, len(current_proxies) // 2) if current_proxies else 1
             proxy_pairs = []
             if current_proxies:
                 for i in range(0, len(current_proxies), 2):
