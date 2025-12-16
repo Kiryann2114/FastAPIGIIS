@@ -6,14 +6,13 @@ import os
 from pydantic import BaseModel
 from fastapi import FastAPI, BackgroundTasks
 from contextlib import asynccontextmanager
-import requests
 from bs4 import BeautifulSoup
 from typing import Optional
 import aiohttp
 from asyncio import to_thread
 import time
 from datetime import datetime
-
+import re
 
 # === Настройка БД с поддержкой асинхронного доступа ===
 # Создаем соединение с БД
@@ -33,7 +32,8 @@ def init_db():
                        UIN TEXT PRIMARY KEY,
                        status TEXT DEFAULT 'Проверка',
                        cheker INTEGER DEFAULT -1,
-                       last_checked TEXT DEFAULT '2000-01-01 00:00:00'
+                       last_checked TEXT DEFAULT '2000-01-01 00:00:00',
+                       date_sales TEXT DEFAULT NULL
                    )
                    ''')
     cursor.execute('''
@@ -41,6 +41,13 @@ def init_db():
                    (
                        login TEXT  PRIMARY KEY,
                        password TEXT
+                   )
+                   ''')
+    cursor.execute('''
+                   CREATE TABLE IF NOT EXISTS Sales
+                   (
+                       UIN TEXT PRIMARY KEY,
+                       date_sales TEXT DEFAULT 'Проверка'
                    )
                    ''')
     # Добавим тестового пользователя: login=test, password=test
@@ -144,6 +151,47 @@ def GetAllUINs():
     return result
 
 
+def SetSales(Uins):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        for UIN in Uins:
+            cursor.execute("SELECT COUNT(*) FROM Sales WHERE UIN = ?", (UIN,))
+            if cursor.fetchone()[0] > 0:
+                cursor.execute("UPDATE Sales SET date_sales = 'Проверка' WHERE UIN = ?", (UIN,))
+            else:
+                cursor.execute("INSERT INTO Sales (UIN, date_sales) VALUES (?, ?)", (UIN, 'Проверка'))
+        conn.commit()
+        conn.close()
+        return "Данные успешно загружены"
+    except Exception as e:
+        print(f"Ошибка при добавлении UIN: {e}")
+        return "Не удалось загрузить данные"
+
+
+def GetSalesDate():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT UIN, date_sales FROM Sales")
+    result = [{'uin': row[0], 'date': row[1]} for row in cursor.fetchall()]
+    conn.close()
+    return result
+
+
+def DeleteSales(Uins):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        for UIN in Uins:
+            cursor.execute("DELETE FROM Sales WHERE UIN = ?", (UIN,))
+        conn.commit()
+        conn.close()
+        return "Данные успешно удалены"
+    except Exception as e:
+        print(f"Ошибка при удалении UIN: {e}")
+        return "Не удалось удалить данные"
+
+
 # === Hash и авторизация ===
 def hash_password(password):
     return hashlib.sha256(password.encode('utf-8')).hexdigest()
@@ -194,6 +242,31 @@ def get_uins_for_checking_batch(limit=100):
     result = [row[0] for row in cursor.fetchall()]
     conn.close()
     return result
+
+
+# === Sales: функции работы с датой продажи ===
+def get_sales_uins_for_checking_batch(limit=100):
+    """Получить батч UINов из Sales, где date_sales = 'Проверка'."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT UIN
+        FROM Sales
+        WHERE date_sales = 'Проверка'
+        LIMIT ?
+    ''', (limit,))
+    result = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return result
+
+
+def update_sales_date(uin: str, sale_date: str):
+    """Обновить дату продажи в Sales для UIN."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE Sales SET date_sales = ? WHERE UIN = ?", (sale_date, uin))
+    conn.commit()
+    conn.close()
 
 
 # === Воркер: проверяет UIN через очередь, с прокси или без ===
@@ -370,9 +443,186 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
 
 # === Глобальные переменные для управления ===
 chek_uins_task: Optional[asyncio.Task] = None
+chek_sales_task: Optional[asyncio.Task] = None
 shutdown_event: Optional[asyncio.Event] = None
 proxy_hash: str = ""
 BATCH_SIZE = 100
+
+
+# === Sales Proxy Pool (10 использований -> отдых 30с; ошибка -> отдых 30с) ===
+class SalesProxyState:
+    def __init__(self, proxy_str: str, cooldown_until: float = 0):
+        self.proxy_str = proxy_str
+        self.use_count = 0
+        self.cooldown_until = cooldown_until
+        self.last_used = 0.0
+
+    def can_use(self, now: float) -> bool:
+        return now >= self.cooldown_until
+
+    def mark_used(self, now: float):
+        self.use_count += 1
+        self.last_used = now
+        if self.use_count >= 10:
+            # 10 кругов (использований) — отдых 30 секунд
+            self.cooldown_until = now + 30
+            self.use_count = 0
+            print(
+                f"[Sales] Прокси {self.get_ip()} уходит на отдых до {time.strftime('%H:%M:%S', time.localtime(self.cooldown_until))}"
+            )
+
+    def mark_error(self, now: float):
+        # Любая ошибка — отдых 30 секунд, повтор с другим прокси
+        self.cooldown_until = now + 30
+        self.use_count = 0
+        print(
+            f"[Sales] Прокси {self.get_ip()} отправлен на отдых из-за ошибки до {time.strftime('%H:%M:%S', time.localtime(self.cooldown_until))}"
+        )
+
+    def get_proxy_config(self) -> tuple[Optional[str], Optional[aiohttp.BasicAuth]]:
+        """
+        Возвращает (proxy_url, proxy_auth) для aiohttp.
+        Важно: многие HTTP-прокси не принимают user:pass в URL и рвут соединение.
+        Поэтому proxy_url формируем как http://ip:port, а логин/пароль передаем через proxy_auth.
+        """
+        try:
+            user_pass, ip_port = self.proxy_str.split("@")
+            user, password = user_pass.split(":", 1)
+            ip, port = ip_port.split(":")
+            proxy_url = f"http://{ip}:{port}"
+            proxy_auth = aiohttp.BasicAuth(user, password)
+            return proxy_url, proxy_auth
+        except Exception:
+            return None, None
+
+    def get_ip(self) -> str:
+        try:
+            ip_port = self.proxy_str.split("@")[1]
+            return ip_port.split(":")[0]
+        except Exception:
+            return self.proxy_str
+
+
+class SalesProxyPool:
+    def __init__(self):
+        self._states_by_proxy: dict[str, SalesProxyState] = {}
+        self._order: list[str] = []
+
+    def refresh(self, proxy_list: list[str]):
+        new_set = set(proxy_list)
+        # удалить отсутствующие
+        for old in list(self._states_by_proxy.keys()):
+            if old not in new_set:
+                del self._states_by_proxy[old]
+        # добавить новые
+        for p in proxy_list:
+            if p not in self._states_by_proxy:
+                self._states_by_proxy[p] = SalesProxyState(p)
+        self._order = [p for p in proxy_list if p in self._states_by_proxy]
+
+    def acquire(self, now: float) -> tuple[Optional[SalesProxyState], Optional[float]]:
+        """Вернуть (proxy_state, wait_seconds). Если все на отдыхе — wait_seconds до ближайшего освобождения."""
+        if not self._order:
+            return None, None
+        available = [self._states_by_proxy[p] for p in self._order if self._states_by_proxy[p].can_use(now)]
+        if available:
+            available.sort(key=lambda x: x.last_used)
+            return available[0], 0.0
+        soonest = min(self._states_by_proxy[p].cooldown_until for p in self._order)
+        return None, max(0.0, soonest - now)
+
+
+async def fetch_sales_date_from_giis(
+    uin: str,
+    session: aiohttp.ClientSession,
+    proxy: Optional[str],
+    proxy_auth: Optional[aiohttp.BasicAuth],
+) -> Optional[str]:
+    """
+    1) GET https://dmdk.ru/ -> достать sessid из <input type="hidden" name="sessid" value="...">
+    2) POST https://dmdk.ru/local/templates/dmdk_new/services_ajax/ajax.php
+       data: sessid=<...>, type="jewel", id=<uin>
+    Возвращает дату продажи в формате dd.mm.yyyy (строка) или None если дата не найдена.
+    """
+    if not proxy:
+        raise ValueError("[Sales] proxy is required but was not provided/parsed")
+
+    timeout = aiohttp.ClientTimeout(total=30)
+    headers = {
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "accept-language": "ru,en;q=0.9",
+        "cache-control": "no-cache",
+        "pragma": "no-cache",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+    }
+
+    # Step 1: get sessid
+    async with session.get(
+        "https://dmdk.ru/",
+        proxy=proxy,
+        proxy_auth=proxy_auth,
+        timeout=timeout,
+        headers=headers,
+    ) as r:
+        if r.status != 200:
+            raise aiohttp.ClientResponseError(
+                request_info=r.request_info,
+                history=r.history,
+                status=r.status,
+                message=f"GET / returned {r.status}",
+                headers=r.headers,
+            )
+        html = await r.text()
+
+    soup = BeautifulSoup(html, "html.parser")
+    sessid_input = soup.find("input", {"type": "hidden", "name": "sessid"})
+    sessid = sessid_input.get("value").strip() if sessid_input and sessid_input.get("value") else ""
+    if not sessid:
+        raise ValueError("[Sales] sessid not found in dmdk.ru HTML")
+
+    # Step 2: POST ajax
+    post_url = "https://dmdk.ru/local/templates/dmdk_new/services_ajax/ajax.php"
+    data = {"sessid": sessid, "type": "jewel", "id": uin}
+
+    post_headers = dict(headers)
+    post_headers.update(
+        {
+            "origin": "https://dmdk.ru",
+            "x-requested-with": "XMLHttpRequest",
+            "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        }
+    )
+
+    async with session.post(
+        post_url,
+        data=data,
+        proxy=proxy,
+        proxy_auth=proxy_auth,
+        timeout=timeout,
+        headers=post_headers,
+    ) as r:
+        if r.status != 200:
+            raise aiohttp.ClientResponseError(
+                request_info=r.request_info,
+                history=r.history,
+                status=r.status,
+                message=f"POST ajax returned {r.status}",
+                headers=r.headers,
+            )
+        result_html = await r.text()
+
+    # Parse: find "Дата продажи" and extract dd.mm.yyyy nearby
+    soup = BeautifulSoup(result_html, "html.parser")
+    label = soup.find("span", string=lambda s: s and "Дата продажи" in s)
+    if not label:
+        # fallback: regex on whole response
+        m = re.search(r"\b\d{2}\.\d{2}\.\d{4}\b", result_html)
+        return m.group(0) if m else None
+
+    container = label.find_parent("div", class_=lambda c: c and "row" in c) or label.parent
+    text = container.get_text(" ", strip=True) if container else soup.get_text(" ", strip=True)
+    m = re.search(r"\b\d{2}\.\d{2}\.\d{4}\b", text)
+    return m.group(0) if m else None
 
 
 # === Основной процесс проверки UIN ===
@@ -439,6 +689,119 @@ async def chek_uins(shutdown: asyncio.Event):
     print("Все воркеры остановлены.")
 
 
+async def chek_sales_dates(shutdown: asyncio.Event):
+    """
+    Фоновая задача:
+    - читает Sales, где date_sales='Проверка'
+    - для каждого UIN делает до 3 попыток запроса к ГИИС через разные прокси
+    - если все прокси на отдыхе — ждёт первого освободившегося
+    - при успехе пишет дату продажи в Sales.date_sales
+    """
+    pool = SalesProxyPool()
+    local_proxy_hash = ""
+    SALES_BATCH_SIZE = 100
+
+    async with aiohttp.ClientSession() as session:
+        while not shutdown.is_set():
+            # Подхватываем изменения proxy.txt (и при первом запуске тоже)
+            try:
+                current_hash = await to_thread(get_proxy_hash)
+                if current_hash != local_proxy_hash:
+                    current_proxies = await to_thread(load_proxies)
+                    pool.refresh(current_proxies)
+                    local_proxy_hash = current_hash
+                    print(f"[Sales] Обновлён список прокси: {len(current_proxies)} шт.")
+            except Exception as e:
+                print(f"[Sales] Ошибка обновления прокси: {e}")
+
+            # Берём UIN'ы на проверку
+            try:
+                uins = await to_thread(get_sales_uins_for_checking_batch, SALES_BATCH_SIZE)
+            except Exception as e:
+                print(f"[Sales] Ошибка чтения Sales из БД: {e}")
+                await asyncio.sleep(5)
+                continue
+
+            if not uins:
+                await asyncio.sleep(5)
+                continue
+
+            for uin in uins:
+                if shutdown.is_set():
+                    break
+
+                success = False
+                attempts_made = 0
+                while attempts_made < 3 and not shutdown.is_set():
+                    # Берём доступный прокси или ждём ближайший
+                    proxy_state = None
+                    req_proxy = None
+                    req_proxy_auth = None
+
+                    while not shutdown.is_set():
+                        now = asyncio.get_event_loop().time()
+                        proxy_state, wait_seconds = pool.acquire(now)
+
+                        if proxy_state is not None:
+                            # форматируем прокси, и только если он валиден — считаем "круг" (использование)
+                            req_proxy, req_proxy_auth = proxy_state.get_proxy_config()
+                            if not req_proxy:
+                                proxy_state.mark_error(now)
+                                print(f"[Sales] UIN {uin} — прокси не распарсился, отправлен на отдых, берём другой")
+                                proxy_state = None
+                                req_proxy = None
+                                req_proxy_auth = None
+                                continue
+
+                            proxy_state.mark_used(now)
+                            break
+
+                        # Нет прокси вообще
+                        if wait_seconds is None:
+                            print("[Sales] Прокси не настроены (proxy.txt пустой). Ожидание 10 сек...")
+                            await asyncio.sleep(10)
+                            continue
+
+                        # Все на отдыхе — ждём первого освободившегося
+                        wait_seconds = max(0.5, float(wait_seconds))
+                        await asyncio.sleep(wait_seconds)
+
+                    if shutdown.is_set() or not req_proxy:
+                        break
+
+                    attempts_made += 1
+                    proxy_ip = proxy_state.get_ip() if proxy_state else "unknown"
+                    print(f"[Sales] UIN {uin} — попытка {attempts_made}/3 через прокси {proxy_ip}")
+
+                    try:
+                        sale_date = await fetch_sales_date_from_giis(uin, session, req_proxy, req_proxy_auth)
+                        if sale_date:
+                            await to_thread(update_sales_date, uin, sale_date)
+                            print(f"[Sales] UIN {uin} — дата продажи '{sale_date}' записана в БД")
+                            success = True
+                            break
+                        else:
+                            print(f"[Sales] UIN {uin} — попытка {attempts_made}/3: дата не получена")
+                    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                        now = asyncio.get_event_loop().time()
+                        if proxy_state is not None:
+                            proxy_state.mark_error(now)
+                        print(f"[Sales] UIN {uin} — попытка {attempts_made}/3: ошибка запроса: {e}")
+                        continue
+                    except Exception as e:
+                        now = asyncio.get_event_loop().time()
+                        if proxy_state is not None:
+                            proxy_state.mark_error(now)
+                        print(f"[Sales] UIN {uin} — попытка {attempts_made}/3: ошибка обработки: {e}")
+                        continue
+
+                if not success:
+                    # Оставляем date_sales='Проверка' — повторим в следующем цикле
+                    pass
+
+            await asyncio.sleep(1)
+
+
 # === FastAPI ===
 class ModelGet(BaseModel):
     UINs: list[str]
@@ -449,15 +812,17 @@ class ModelGet(BaseModel):
 # === Lifespan: управление жизненным циклом приложения ===
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global chek_uins_task, shutdown_event
+    global chek_uins_task, chek_sales_task, shutdown_event
     shutdown_event = asyncio.Event()
     chek_uins_task = asyncio.create_task(chek_uins(shutdown_event))
+    chek_sales_task = asyncio.create_task(chek_sales_dates(shutdown_event))
 
     yield
 
     shutdown_event.set()
-    if chek_uins_task:
-        await chek_uins_task
+    tasks = [t for t in [chek_uins_task, chek_sales_task] if t]
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 app = FastAPI(lifespan=lifespan)
@@ -496,6 +861,23 @@ async def APIGetUINStatus():
 async def APIGetAllUINs():
     return GetAllUINs()
 
+@app.get("/api/SetSalesDate")
+async def APISetSalesDate(body: ModelGet):
+    if check_user(body.login, body.password):
+        return SetSales(body.UINs)
+    else:
+        return 505
+
+@app.get("/api/DeleteSalesDate")
+async def APIDeleteSalesDate(body: ModelGet):
+    if check_user(body.login, body.password):
+        return DeleteSales(body.UINs)
+    else:
+        return 505
+
+@app.get("/api/GetSalesDate")
+async def APIGetSalesDate():
+    return GetSalesDate()
 
 # Запуск сервера
 #if __name__ == '__main__':
