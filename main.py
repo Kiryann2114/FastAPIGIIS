@@ -282,13 +282,24 @@ def get_sales_uins_for_checking_batch(limit=100):
     return result
 
 
-def update_sales_date(uin: str, sale_date: str):
-    """Обновить дату продажи в Sales для UIN."""
+def update_sales_date_sync_uins_and_maybe_delete(uin: str, sale_date: str):
+    """
+    1) Пишет дату в Sales.date_sales
+    2) Если UIN существует в UINs — пишет дату в UINs.date_sales и удаляет запись из Sales
+       (Sales используется как очередь на добор даты).
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("UPDATE Sales SET date_sales = ? WHERE UIN = ?", (sale_date, uin))
-    conn.commit()
-    conn.close()
+    try:
+        cursor.execute("UPDATE Sales SET date_sales = ? WHERE UIN = ?", (sale_date, uin))
+        cursor.execute("SELECT 1 FROM UINs WHERE UIN = ? LIMIT 1", (uin,))
+        exists_in_uins = cursor.fetchone() is not None
+        if exists_in_uins:
+            cursor.execute("UPDATE UINs SET date_sales = ? WHERE UIN = ?", (sale_date, uin))
+            cursor.execute("DELETE FROM Sales WHERE UIN = ?", (uin,))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # === Воркер: проверяет UIN через очередь, с прокси или без ===
@@ -833,8 +844,8 @@ async def chek_sales_dates(shutdown: asyncio.Event):
                     try:
                         sale_date = await fetch_sales_date_from_giis(uin, session, req_proxy, req_proxy_auth)
                         if sale_date:
-                            await to_thread(update_sales_date, uin, sale_date)
-                            print(f"[Sales] UIN {uin} — дата продажи '{sale_date}' записана в БД")
+                            await to_thread(update_sales_date_sync_uins_and_maybe_delete, uin, sale_date)
+                            print(f"[Sales] UIN {uin} — дата продажи '{sale_date}' обработана (Sales -> UINs при наличии)")
                             success = True
                             break
                         else:
