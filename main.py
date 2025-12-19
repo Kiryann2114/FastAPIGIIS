@@ -444,40 +444,10 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
                         await to_thread(update_uin_status, uin, status)
                         print(f"Воркер {worker_id}: UIN {uin} — статус '{status}'")
 
-                        # Если продан — сразу пытаемся получить дату продажи (как в Sales)
+                        # Если продан — записываем в таблицу Sales для фонового процесса
                         if status == "Продан":
-                            # Если прокси нет — сразу получить дату не можем; ставим в Sales на ретрай
-                            if not has_proxies or 'current_proxy' not in locals():
-                                await to_thread(mark_sales_needs_check, uin)
-                            else:
-                                # Для dmdk.ru используем proxy_url без учётных данных + proxy_auth (как в Sales)
-                                try:
-                                    user_pass, ip_port = current_proxy.proxy_str.split("@")
-                                    user, password = user_pass.split(":", 1)
-                                    ip, port = ip_port.split(":")
-                                    sales_proxy = f"http://{ip}:{port}"
-                                    sales_proxy_auth = aiohttp.BasicAuth(user, password)
-                                except Exception:
-                                    sales_proxy = None
-                                    sales_proxy_auth = None
-
-                                if not sales_proxy:
-                                    # не удалось распарсить прокси — отправляем в Sales на ретрай
-                                    await to_thread(mark_sales_needs_check, uin)
-                                else:
-                                    try:
-                                        sale_date = await fetch_sales_date_from_giis(
-                                            uin, session, sales_proxy, sales_proxy_auth
-                                        )
-                                        if sale_date:
-                                            await to_thread(update_uin_sale_date, uin, sale_date)
-                                        else:
-                                            # date_sales остаётся NULL (вариант B), но ставим в Sales на ретрай
-                                            await to_thread(mark_sales_needs_check, uin)
-                                    except Exception as e:
-                                        # date_sales остаётся NULL (вариант B), но ставим в Sales на ретрай
-                                        print(f"Воркер {worker_id}: UIN {uin} — не удалось получить дату продажи: {e}")
-                                        await to_thread(mark_sales_needs_check, uin)
+                            await to_thread(mark_sales_needs_check, uin)
+                            print(f"Воркер {worker_id}: UIN {uin} — добавлен в очередь на проверку даты продажи")
 
                 except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                     print(f"Воркер {worker_id}: Ошибка запроса для UIN {uin}: {e} → повтор...")
