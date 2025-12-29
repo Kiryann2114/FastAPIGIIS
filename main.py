@@ -942,14 +942,14 @@ async def APIGetUINStatus():
 async def APIGetAllUINs():
     return GetAllUINs()
 
-@app.get("/api/SetSalesDate")
+@app.post("/api/SetSalesDate")
 async def APISetSalesDate(body: ModelGet):
     if check_user(body.login, body.password):
         return SetSales(body.UINs)
     else:
         return 505
 
-@app.get("/api/DeleteSalesDate")
+@app.post("/api/DeleteSalesDate")
 async def APIDeleteSalesDate(body: ModelGet):
     if check_user(body.login, body.password):
         return DeleteSales(body.UINs)
