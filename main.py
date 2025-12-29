@@ -727,46 +727,18 @@ async def chek_uins(shutdown: asyncio.Event):
     print("Все воркеры остановлены.")
 
 
-async def chek_sales_dates(shutdown: asyncio.Event):
-    """
-    Фоновая задача:
-    - читает Sales, где date_sales='Проверка'
-    - для каждого UIN делает до 3 попыток запроса к ГИИС через разные прокси
-    - если все прокси на отдыхе — ждёт первого освободившегося
-    - при успехе пишет дату продажи в Sales.date_sales
-    """
-    pool = SalesProxyPool()
-    local_proxy_hash = ""
-    SALES_BATCH_SIZE = 100
-
+# === Воркер для проверки дат продажи ===
+async def sales_worker(worker_id: int, pool: SalesProxyPool, queue: asyncio.Queue, shutdown: asyncio.Event):
+    """Воркер для проверки дат продажи из очереди"""
     async with aiohttp.ClientSession() as session:
         while not shutdown.is_set():
-            # Подхватываем изменения proxy.txt (и при первом запуске тоже)
             try:
-                current_hash = await to_thread(get_proxy_hash)
-                if current_hash != local_proxy_hash:
-                    current_proxies = await to_thread(load_proxies)
-                    pool.refresh(current_proxies)
-                    local_proxy_hash = current_hash
-                    print(f"[Sales] Обновлён список прокси: {len(current_proxies)} шт.")
-            except Exception as e:
-                print(f"[Sales] Ошибка обновления прокси: {e}")
-
-            # Берём UIN'ы на проверку
-            try:
-                uins = await to_thread(get_sales_uins_for_checking_batch, SALES_BATCH_SIZE)
-            except Exception as e:
-                print(f"[Sales] Ошибка чтения Sales из БД: {e}")
-                await asyncio.sleep(5)
-                continue
-
-            if not uins:
-                await asyncio.sleep(5)
-                continue
-
-            for uin in uins:
-                if shutdown.is_set():
+                uin = await queue.get()
+                if uin is None:
+                    queue.task_done()
                     break
+
+                print(f"[Sales Worker {worker_id}]: проверяю UIN {uin}")
 
                 success = False
                 attempts_made = 0
@@ -785,7 +757,7 @@ async def chek_sales_dates(shutdown: asyncio.Event):
                             req_proxy, req_proxy_auth = proxy_state.get_proxy_config()
                             if not req_proxy:
                                 proxy_state.mark_error(now)
-                                print(f"[Sales] UIN {uin} — прокси не распарсился, отправлен на отдых, берём другой")
+                                print(f"[Sales Worker {worker_id}]: UIN {uin} — прокси не распарсился, отправлен на отдых, берём другой")
                                 proxy_state = None
                                 req_proxy = None
                                 req_proxy_auth = None
@@ -796,7 +768,7 @@ async def chek_sales_dates(shutdown: asyncio.Event):
 
                         # Нет прокси вообще
                         if wait_seconds is None:
-                            print("[Sales] Прокси не настроены (proxy.txt пустой). Ожидание 10 сек...")
+                            print(f"[Sales Worker {worker_id}]: Прокси не настроены (proxy.txt пустой). Ожидание 10 сек...")
                             await asyncio.sleep(10)
                             continue
 
@@ -809,35 +781,106 @@ async def chek_sales_dates(shutdown: asyncio.Event):
 
                     attempts_made += 1
                     proxy_ip = proxy_state.get_ip() if proxy_state else "unknown"
-                    print(f"[Sales] UIN {uin} — попытка {attempts_made}/3 через прокси {proxy_ip}")
+                    print(f"[Sales Worker {worker_id}]: UIN {uin} — попытка {attempts_made}/3 через прокси {proxy_ip}")
 
                     try:
                         sale_date = await fetch_sales_date_from_giis(uin, session, req_proxy, req_proxy_auth)
                         if sale_date:
                             await to_thread(update_sales_date_sync_uins_and_maybe_delete, uin, sale_date)
-                            print(f"[Sales] UIN {uin} — дата продажи '{sale_date}' обработана (Sales -> UINs при наличии)")
+                            print(f"[Sales Worker {worker_id}]: UIN {uin} — дата продажи '{sale_date}' обработана (Sales -> UINs при наличии)")
                             success = True
                             break
                         else:
-                            print(f"[Sales] UIN {uin} — попытка {attempts_made}/3: дата не получена")
+                            print(f"[Sales Worker {worker_id}]: UIN {uin} — попытка {attempts_made}/3: дата не получена")
                     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                         now = asyncio.get_event_loop().time()
                         if proxy_state is not None:
                             proxy_state.mark_error(now)
-                        print(f"[Sales] UIN {uin} — попытка {attempts_made}/3: ошибка запроса: {e}")
+                        print(f"[Sales Worker {worker_id}]: UIN {uin} — попытка {attempts_made}/3: ошибка запроса: {e}")
                         continue
                     except Exception as e:
                         now = asyncio.get_event_loop().time()
                         if proxy_state is not None:
                             proxy_state.mark_error(now)
-                        print(f"[Sales] UIN {uin} — попытка {attempts_made}/3: ошибка обработки: {e}")
+                        print(f"[Sales Worker {worker_id}]: UIN {uin} — попытка {attempts_made}/3: ошибка обработки: {e}")
                         continue
 
                 if not success:
                     # Оставляем date_sales='Проверка' — повторим в следующем цикле
                     pass
 
-            await asyncio.sleep(1)
+                queue.task_done()
+
+            except Exception as e:
+                print(f"[Sales Worker {worker_id}]: Критическая ошибка: {e}")
+                queue.task_done()
+
+
+async def chek_sales_dates(shutdown: asyncio.Event):
+    """
+    Фоновая задача с 3 воркерами:
+    - читает Sales, где date_sales='Проверка'
+    - распределяет UIN'ы по воркерам через очередь
+    - каждый воркер делает до 3 попыток запроса к ГИИС через разные прокси
+    - при успехе пишет дату продажи в Sales.date_sales
+    """
+    pool = SalesProxyPool()
+    local_proxy_hash = ""
+    SALES_BATCH_SIZE = 100
+    NUM_WORKERS = 3  # 3 потока для проверки дат
+    queue = asyncio.Queue()
+    tasks = []
+
+    # Загружаем прокси сразу при старте
+    try:
+        current_hash = await to_thread(get_proxy_hash)
+        current_proxies = await to_thread(load_proxies)
+        pool.refresh(current_proxies)
+        local_proxy_hash = current_hash
+        print(f"[Sales] Запуск: загружено {len(current_proxies)} прокси, создано {NUM_WORKERS} воркеров")
+    except Exception as e:
+        print(f"[Sales] Ошибка загрузки прокси при старте: {e}")
+
+    # Запускаем воркеры
+    for i in range(NUM_WORKERS):
+        task = asyncio.create_task(sales_worker(i, pool, queue, shutdown))
+        tasks.append(task)
+
+    while not shutdown.is_set():
+        # Подхватываем изменения proxy.txt
+        try:
+            current_hash = await to_thread(get_proxy_hash)
+            if current_hash != local_proxy_hash:
+                current_proxies = await to_thread(load_proxies)
+                pool.refresh(current_proxies)
+                local_proxy_hash = current_hash
+                print(f"[Sales] Обновлён список прокси: {len(current_proxies)} шт.")
+        except Exception as e:
+            print(f"[Sales] Ошибка обновления прокси: {e}")
+
+        # Если очередь почти пустая, загружаем следующую партию UIN
+        if queue.qsize() < SALES_BATCH_SIZE // 2:
+            try:
+                uins = await to_thread(get_sales_uins_for_checking_batch, SALES_BATCH_SIZE)
+                if uins:
+                    print(f"[Sales] Найдено {len(uins)} UIN'ов для проверки даты продажи, добавляю в очередь")
+                    for uin in uins:
+                        await queue.put(uin)
+                else:
+                    # Нет UIN'ов для проверки - ждём и продолжаем цикл
+                    await asyncio.sleep(5)
+            except Exception as e:
+                print(f"[Sales] Ошибка чтения Sales из БД: {e}")
+                await asyncio.sleep(5)
+
+        await asyncio.sleep(1)
+
+    # Останавливаем воркеры
+    for _ in range(NUM_WORKERS):
+        await queue.put(None)
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    print("[Sales] Все воркеры остановлены.")
 
 
 # === FastAPI ===
