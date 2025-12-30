@@ -128,7 +128,7 @@ def GetUIN(Uins):
         cursor.execute("SELECT UIN, status FROM UINs WHERE UIN = ?", (uin,))
         result = cursor.fetchone()
         if result:
-            arr_uin.append({'uin': result[0], 'status': result[1]})
+            arr_uin.append({'uin': result[0], 'status': result[1], 'date_sales': result[2]})
     conn.close()
     return arr_uin
 
