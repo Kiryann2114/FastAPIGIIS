@@ -125,7 +125,7 @@ def GetUIN(Uins):
     cursor = conn.cursor()
     arr_uin = []
     for uin in Uins:
-        cursor.execute("SELECT UIN, status FROM UINs WHERE UIN = ?", (uin,))
+        cursor.execute("SELECT UIN, status, date_sales FROM UINs WHERE UIN = ?", (uin,))
         result = cursor.fetchone()
         if result:
             arr_uin.append({'uin': result[0], 'status': result[1], 'date_sales': result[2]})
