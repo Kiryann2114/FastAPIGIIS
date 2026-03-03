@@ -587,11 +587,11 @@ async def fetch_sales_date_from_giis(
 
     timeout = aiohttp.ClientTimeout(total=30)
     headers = {
-        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "accept": "*/*",
         "accept-language": "ru,en;q=0.9",
         "cache-control": "no-cache",
         "pragma": "no-cache",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 YaBrowser/25.12.0.0 Safari/537.36"
     }
 
     # Step 1: get sessid
