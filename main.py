@@ -250,6 +250,19 @@ def mark_sales_needs_check(uin: str):
     conn.close()
 
 
+def mark_sales_not_received(uin: str):
+    """Записать, что дату продажи получить не удалось (Sales.date_sales='не получено')."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM Sales WHERE UIN = ?", (uin,))
+    if cursor.fetchone()[0] > 0:
+        cursor.execute("UPDATE Sales SET date_sales = 'не получено' WHERE UIN = ?", (uin,))
+    else:
+        cursor.execute("INSERT INTO Sales (UIN, date_sales) VALUES (?, ?)", (uin, 'не получено'))
+    conn.commit()
+    conn.close()
+
+
 def get_uins_for_checking_batch(limit=100):
     """Получить батч UINов для проверки (исключая 'Продан'), сортируя по времени последней проверки"""
     conn = get_db_connection()
@@ -268,13 +281,28 @@ def get_uins_for_checking_batch(limit=100):
 
 # === Sales: функции работы с датой продажи ===
 def get_sales_uins_for_checking_batch(limit=100):
-    """Получить батч UINов из Sales, где date_sales = 'Проверка'."""
+    """
+    Сначала возвращает UIN'ы со статусом 'Проверка'.
+    UIN'ы со статусом 'не получено' не проверяются, пока в базе есть хотя бы один со статусом 'Проверка'.
+    Когда 'Проверка' заканчиваются — возвращаются 'не получено' для повторной попытки.
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
         SELECT UIN
         FROM Sales
         WHERE date_sales = 'Проверка'
+        LIMIT ?
+    ''', (limit,))
+    result = [row[0] for row in cursor.fetchall()]
+    if result:
+        conn.close()
+        return result
+    # Нет UIN'ов со статусом 'Проверка' — берём 'не получено' для ретрая
+    cursor.execute('''
+        SELECT UIN
+        FROM Sales
+        WHERE date_sales = 'не получено'
         LIMIT ?
     ''', (limit,))
     result = [row[0] for row in cursor.fetchall()]
@@ -806,8 +834,8 @@ async def sales_worker(worker_id: int, pool: SalesProxyPool, queue: asyncio.Queu
                         continue
 
                 if not success:
-                    # Оставляем date_sales='Проверка' — повторим в следующем цикле
-                    pass
+                    await to_thread(mark_sales_not_received, uin)
+                    print(f"[Sales Worker {worker_id}]: UIN {uin} — дата не получена, статус 'не получено'")
 
                 queue.task_done()
 
