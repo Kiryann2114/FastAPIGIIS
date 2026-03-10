@@ -335,77 +335,36 @@ def update_sales_date_sync_uins_and_maybe_delete(uin: str, sale_date: str):
 
 # === Воркер: проверяет UIN через очередь, с прокси или без ===
 async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
-    # Несколько вариантов заголовков для маскировки под разные браузеры
-    headers_variants = [
-        {
-            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-            'accept-encoding': 'gzip, deflate, br, zstd',
-            'accept-language': 'ru,en;q=0.9',
-            'cache-control': 'no-cache',
-            'connection': 'keep-alive',
-            'content-type': 'application/x-www-form-urlencoded',
-            'host': 'probpalata.gov.ru',
-            'origin': 'https://probpalata.gov.ru',
-            'pragma': 'no-cache',
-            'referer': 'https://probpalata.gov.ru/',
-            'sec-ch-ua': '"Not)A;Brand";v="8", "Chromium";v="122", "Google Chrome";v="122"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"',
-            'sec-fetch-dest': 'document',
-            'sec-fetch-mode': 'navigate',
-            'sec-fetch-site': 'same-origin',
-            'sec-fetch-user': '?1',
-            'upgrade-insecure-requests': '1',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-        },
-        {
-            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-            'accept-encoding': 'gzip, deflate, br, zstd',
-            'accept-language': 'ru,en;q=0.8',
-            'cache-control': 'no-cache',
-            'connection': 'keep-alive',
-            'content-type': 'application/x-www-form-urlencoded',
-            'host': 'probpalata.gov.ru',
-            'origin': 'https://probpalata.gov.ru',
-            'pragma': 'no-cache',
-            'referer': 'https://probpalata.gov.ru/',
-            'sec-ch-ua': '"Not.A/Brand";v="8", "Chromium";v="120", "Microsoft Edge";v="120"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"',
-            'sec-fetch-dest': 'document',
-            'sec-fetch-mode': 'navigate',
-            'sec-fetch-site': 'same-origin',
-            'sec-fetch-user': '?1',
-            'upgrade-insecure-requests': '1',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0'
-        },
-        {
-            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'accept-encoding': 'gzip, deflate, br, zstd',
-            'accept-language': 'ru,en-US;q=0.7,en;q=0.3',
-            'cache-control': 'no-cache',
-            'connection': 'keep-alive',
-            'content-type': 'application/x-www-form-urlencoded',
-            'host': 'probpalata.gov.ru',
-            'origin': 'https://probpalata.gov.ru',
-            'pragma': 'no-cache',
-            'referer': 'https://probpalata.gov.ru/',
-            'upgrade-insecure-requests': '1',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0'
-        },
-    ]
+    # Стандартные заголовки запроса (оставляем как были для probpalata)
+    headers = {
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'accept-encoding': 'gzip, deflate, br, zstd',
+        'accept-language': 'ru,en;q=0.9',
+        'cache-control': 'no-cache',
+        'connection': 'keep-alive',
+        'content-type': 'application/x-www-form-urlencoded',
+        'host': 'probpalata.gov.ru',
+        'origin': 'https://probpalata.gov.ru',
+        'pragma': 'no-cache',
+        'referer': 'https://probpalata.gov.ru/',
+        'sec-ch-ua': '"Not)A;Brand";v="8", "Chromium";v="138", "YaBrowser";v="25.8", "Yowser";v="2.5"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
+        'sec-fetch-dest': 'document',
+        'sec-fetch-mode': 'navigate',
+        'sec-fetch-site': 'same-origin',
+        'sec-fetch-user': '?1',
+        'upgrade-insecure-requests': '1',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36'
+    }
 
-    headers = random.choice(headers_variants)
-
-    # Структура для хранения состояния прокси (для probpalata)
+    # Структура для хранения состояния прокси (для probpalata / dmdk)
     class ProxyState:
         def __init__(self, proxy_str, cooldown_until=0):
             self.proxy_str = proxy_str
             self.request_count = 0
             self.cooldown_until = cooldown_until  # Время до которого прокси отдыхает
             self.last_used = 0
-            self.consecutive_403 = 0
-            self.consecutive_failures = 0
 
         def can_use(self, current_time):
             return current_time >= self.cooldown_until
@@ -447,7 +406,6 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
     has_proxies = len(proxies) > 0
 
     async with aiohttp.ClientSession(headers=headers) as session:
-        session_inited = False  # делали ли уже стартовый GET как «браузер»
         while True:
             try:
                 uin = await queue.get()
@@ -504,90 +462,59 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
                     req_proxy = None
 
                 try:
-                    # «Полный сценарий браузера»: стартовый GET главной страницы,
-                    # чтобы получить cookies/сессию перед первым POST.
-                    if not session_inited:
+                    # === СТАРАЯ ЛОГИКА probpalata.gov.ru (оставлена закомментированной для истории) ===
+                    # async with session.post(
+                    #         "https://probpalata.gov.ru/check-uin/",
+                    #         data=data,
+                    #         timeout=aiohttp.ClientTimeout(total=10),
+                    #         proxy=req_proxy,
+                    # ) as response:
+                    #     ...
+
+                    # === НОВАЯ ЛОГИКА: статус и дата через dmdk.ru (одним запросом) ===
+                    # Для основной проверки UIN используем тот же механизм, что и для дат продажи.
+                    # Прокси разбираем в формате proxy_url + proxy_auth и передаём в dmdk.
+                    from aiohttp import BasicAuth as _BasicAuth  # локальный импорт для ясности типов
+
+                    proxy_url = None
+                    proxy_auth = None
+                    if req_proxy:
+                        # req_proxy сейчас имеет вид http://user:pass@ip:port — разбираем обратно
                         try:
-                            async with session.get(
-                                "https://probpalata.gov.ru/",
-                                timeout=aiohttp.ClientTimeout(total=10),
-                                proxy=req_proxy,
-                            ) as _:
-                                pass
+                            prefix, rest = req_proxy.split("://", 1)
+                            creds, host_port = rest.split("@", 1)
+                            user, password = creds.split(":", 1)
+                            host, port = host_port.split(":", 1)
+                            proxy_url = f"http://{host}:{port}"
+                            proxy_auth = _BasicAuth(user, password)
                         except Exception as e:
-                            print(f"Воркер {worker_id}: Ошибка стартового GET probpalata.gov.ru: {e}")
-                        session_inited = True
+                            print(f"Воркер {worker_id}: не удалось распарсить proxy для dmdk: {e}")
+                            proxy_url = None
+                            proxy_auth = None
 
-                    async with session.post(
-                            "https://probpalata.gov.ru/check-uin/",
-                            data=data,
-                            timeout=aiohttp.ClientTimeout(total=10),
-                            proxy=req_proxy,
-                    ) as response:
-                        if response.status != 200:
-                            # Читаем часть тела ответа для диагностики (не более 300 символов)
-                            try:
-                                body = await response.text()
-                                body_snippet = body[:300].replace("\n", " ").replace("\r", " ")
-                            except Exception as e:
-                                body_snippet = f"<не удалось прочитать тело ответа: {e}>"
+                    status = "НеПродан"
+                    sale_date = None
+                    try:
+                        status, sale_date = await fetch_status_and_date_from_giis(
+                            uin, session, proxy_url, proxy_auth
+                        )
+                    except Exception as e:
+                        # dmdk вернул ошибку — пробросим в общий обработчик ниже
+                        raise e
 
-                            print(f"Воркер {worker_id}: HTTP {response.status} для UIN {uin} → повтор. Фрагмент ответа: {body_snippet}")
+                    # Обновление статуса UIN в БД
+                    await to_thread(update_uin_status, uin, status)
+                    print(f"Воркер {worker_id}: UIN {uin} — статус '{status}' (через dmdk)")
 
-                            # Прокси, вернувший 503/403/другой ошибку — отправляем на короткий отдых,
-                            # накапливаем счётчики, чтобы при постоянных ошибках отключать его надольше.
-                            if has_proxies and 'current_proxy' in locals():
-                                current_proxy.request_count = 0
-                                # Базовый отдых 30 секунд
-                                current_proxy.cooldown_until = current_time + 30
-
-                                if response.status == 403:
-                                    current_proxy.consecutive_403 += 1
-                                    print(f"Прокси {current_proxy.get_ip()} — подряд 403: {current_proxy.consecutive_403}")
-                                    # Если прокси стабильно получает 403, отключаем его надолго (10 минут)
-                                    if current_proxy.consecutive_403 >= 3:
-                                        current_proxy.cooldown_until = current_time + 600
-                                        current_proxy.consecutive_403 = 0
-                                        print(f"Прокси {current_proxy.get_ip()} временно отключён на 10 минут из-за повторяющихся 403")
-                                else:
-                                    current_proxy.consecutive_failures += 1
-                                    print(f"Прокси {current_proxy.get_ip()} — подряд ошибок: {current_proxy.consecutive_failures}")
-                                    # Если много разных ошибок подряд — тоже отключаем на 10 минут
-                                    if current_proxy.consecutive_failures >= 5:
-                                        current_proxy.cooldown_until = current_time + 600
-                                        current_proxy.consecutive_failures = 0
-                                        print(f"Прокси {current_proxy.get_ip()} временно отключён на 10 минут из-за повторяющихся ошибок")
-
-                                print(f"Прокси {current_proxy.get_ip()} отправлен на отдых из-за HTTP {response.status}")
-
-                            # ПРОВЕРЯЕМ СТАТУС ПЕРЕД ПОВТОРНЫМ ДОБАВЛЕНИЕМ
-                            current_status = await to_thread(get_uin_status_from_db, uin)
-                            if not current_status or current_status != 'Продан':
-                                retry_delay = 5 if response.status in (503, 403) else 2
-                                await asyncio.sleep(retry_delay)
-                                await queue.put(uin)
-                            else:
-                                print(f"Воркер {worker_id}: UIN {uin} стал проданным, не добавляем в очередь")
-
-                            queue.task_done()
-                            continue
-
-                        text = await response.text()
-                        soup = BeautifulSoup(text, 'html.parser')
-                        target = soup.find('p', class_='check-result-row__value', string=lambda s: s and 'Продано' in s)
-                        status = "Продан" if target else "НеПродан"
-
-                        # Обновление БД в отдельном потоке
-                        await to_thread(update_uin_status, uin, status)
-                        print(f"Воркер {worker_id}: UIN {uin} — статус '{status}'")
-
-                        # Если продан — записываем в таблицу Sales для фонового процесса
-                        if status == "Продан":
+                    if status == "Продан":
+                        if sale_date:
+                            # Если дата есть — пишем её сразу в UINs и синхронизируем с Sales
+                            await to_thread(update_sales_date_sync_uins_and_maybe_delete, uin, sale_date)
+                            print(f"Воркер {worker_id}: UIN {uin} — дата продажи '{sale_date}' получена сразу через dmdk")
+                        else:
+                            # Дата не получена — ставим в Sales для фоновой дообработки
                             await to_thread(mark_sales_needs_check, uin)
-                            print(f"Воркер {worker_id}: UIN {uin} — добавлен в очередь на проверку даты продажи")
-
-                        # Небольшая пауза между успешными запросами, чтобы снизить нагрузку
-                        await asyncio.sleep(1)
+                            print(f"Воркер {worker_id}: UIN {uin} — продан, но дата не получена, добавлен в Sales для проверки даты")
 
                 except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                     print(f"Воркер {worker_id}: Ошибка запроса для UIN {uin}: {e} → повтор...")
@@ -803,6 +730,107 @@ async def fetch_sales_date_from_giis(
     return m.group(0) if m else None
 
 
+async def fetch_status_and_date_from_giis(
+    uin: str,
+    session: aiohttp.ClientSession,
+    proxy: Optional[str],
+    proxy_auth: Optional[aiohttp.BasicAuth],
+) -> tuple[str, Optional[str]]:
+    """
+    Единый запрос к dmdk.ru, возвращающий:
+    - статус UIN ("Продан" / "НеПродан")
+    - дату продажи (dd.mm.yyyy) или None.
+    Использует тот же механизм, что и fetch_sales_date_from_giis.
+    """
+    if not proxy:
+        raise ValueError("[Status+Sales] proxy is required but was not provided/parsed")
+
+    timeout = aiohttp.ClientTimeout(total=30)
+    headers = {
+        "accept": "*/*",
+        "accept-language": "ru,en;q=0.9",
+        "cache-control": "no-cache",
+        "pragma": "no-cache",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 YaBrowser/25.12.0.0 Safari/537.36"
+    }
+
+    # Шаг 1: получаем sessid
+    async with session.get(
+        "https://dmdk.ru/",
+        proxy=proxy,
+        proxy_auth=proxy_auth,
+        timeout=timeout,
+        headers=headers,
+    ) as r:
+        if r.status != 200:
+            raise aiohttp.ClientResponseError(
+                request_info=r.request_info,
+                history=r.history,
+                status=r.status,
+                message=f"GET / returned {r.status}",
+                headers=r.headers,
+            )
+        html = await r.text()
+
+    soup = BeautifulSoup(html, "html.parser")
+    sessid_input = soup.find("input", {"type": "hidden", "name": "sessid"})
+    sessid = sessid_input.get("value").strip() if sessid_input and sessid_input.get("value") else ""
+    if not sessid:
+        raise ValueError("[Status+Sales] sessid not found in dmdk.ru HTML")
+
+    # Шаг 2: POST ajax
+    post_url = "https://dmdk.ru/local/templates/dmdk_new/services_ajax/ajax.php"
+    data = {"sessid": sessid, "type": "jewel", "id": uin}
+
+    post_headers = dict(headers)
+    post_headers.update(
+        {
+            "origin": "https://dmdk.ru",
+            "x-requested-with": "XMLHttpRequest",
+            "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        }
+    )
+
+    async with session.post(
+        post_url,
+        data=data,
+        proxy=proxy,
+        proxy_auth=proxy_auth,
+        timeout=timeout,
+        headers=post_headers,
+    ) as r:
+        if r.status != 200:
+            raise aiohttp.ClientResponseError(
+                request_info=r.request_info,
+                history=r.history,
+                status=r.status,
+                message=f"POST ajax returned {r.status}",
+                headers=r.headers,
+            )
+        result_html = await r.text()
+
+    # Разбор HTML: статус + дата
+    soup = BeautifulSoup(result_html, "html.parser")
+
+    # Статус: смотрим на кнопку со статусом
+    status_span = soup.find("span", class_="fw-bold status-button__text-large")
+    status_text = status_span.get_text(" ", strip=True) if status_span else ""
+    status = "Продан" if "Продано" in status_text else "НеПродан"
+
+    # Дата продажи — логика такая же, как в fetch_sales_date_from_giis
+    label = soup.find("span", string=lambda s: s and "Дата продажи" in s)
+    if not label:
+        # fallback: regex по всему ответу
+        m = re.search(r"\b\d{2}\.\d{2}\.\d{4}\b", result_html)
+        sale_date = m.group(0) if m else None
+        return status, sale_date
+
+    container = label.find_parent("div", class_=lambda c: c and "row" in c) or label.parent
+    text = container.get_text(" ", strip=True) if container else soup.get_text(" ", strip=True)
+    m = re.search(r"\b\d{2}\.\d{2}\.\d{4}\b", text)
+    sale_date = m.group(0) if m else None
+    return status, sale_date
+
 # === Основной процесс проверки UIN ===
 async def chek_uins(shutdown: asyncio.Event):
     global proxy_hash
@@ -822,9 +850,7 @@ async def chek_uins(shutdown: asyncio.Event):
                 await asyncio.gather(*tasks, return_exceptions=True)
             tasks.clear()
 
-            base_workers = max(1, len(current_proxies) // 2) if current_proxies else 1
-            # Ограничиваем количество воркеров, чтобы не засыпать сайт запросами
-            num_workers = min(3, base_workers)
+            num_workers = max(1, len(current_proxies) // 2) if current_proxies else 1
             proxy_pairs = []
             if current_proxies:
                 for i in range(0, len(current_proxies), 2):
