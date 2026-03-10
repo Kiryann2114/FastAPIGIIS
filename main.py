@@ -356,7 +356,7 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
         'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36'
     }
 
-    # Структура для хранения состояния прокси
+    # Структура для хранения состояния прокси (для probpalata)
     class ProxyState:
         def __init__(self, proxy_str, cooldown_until=0):
             self.proxy_str = proxy_str
@@ -375,6 +375,21 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
                 self.request_count = 0
                 print(
                     f"Прокси {self.get_ip()} уходит на отдых до {time.strftime('%H:%M:%S', time.localtime(self.cooldown_until))}")
+
+        def get_proxy_config(self) -> tuple[Optional[str], Optional[aiohttp.BasicAuth]]:
+            """
+            Возвращает (proxy_url, proxy_auth) для aiohttp для запросов к probpalata.gov.ru.
+            Как и в Sales, формируем proxy_url без user:pass, а логин/пароль передаём через proxy_auth.
+            """
+            try:
+                user_pass, ip_port = self.proxy_str.split("@")
+                user, password = user_pass.split(":", 1)
+                ip, port = ip_port.split(":")
+                proxy_url = f"http://{ip}:{port}"
+                proxy_auth = aiohttp.BasicAuth(user, password)
+                return proxy_url, proxy_auth
+            except Exception:
+                return None, None
 
         def get_ip(self):
             try:
@@ -407,7 +422,8 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
                 data = {'action': 'check', 'uin': uin}
 
                 # Выбор доступного прокси
-                req_proxy = None
+                req_proxy_url = None
+                req_proxy_auth = None
                 current_time = asyncio.get_event_loop().time()
 
                 if has_proxies:
@@ -419,20 +435,19 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
                         available_proxies.sort(key=lambda x: x.last_used)
                         current_proxy = available_proxies[0]
 
-                        # Форматируем прокси для aiohttp
-                        try:
-                            user_pass, ip_port = current_proxy.proxy_str.split("@")
-                            user, password = user_pass.split(":")
-                            ip, port = ip_port.split(":")
-                            req_proxy = f"http://{user}:{password}@{ip}:{port}"
-                        except Exception as e:
-                            print(f"Ошибка парсинга прокси: {e}")
-                            req_proxy = None
-
-                        # Помечаем прокси как использованный
-                        current_proxy.mark_used(current_time)
-                        print(
-                            f"Воркер {worker_id}: использует прокси {current_proxy.get_ip()} (запрос {current_proxy.request_count}/20)")
+                        # Форматируем прокси для aiohttp: proxy_url + proxy_auth
+                        req_proxy_url, req_proxy_auth = current_proxy.get_proxy_config()
+                        if not req_proxy_url:
+                            # Не удалось распарсить прокси — отправляем его на отдых и пробуем другой
+                            current_proxy.cooldown_until = current_time + 30
+                            current_proxy.request_count = 0
+                            print(f"Воркер {worker_id}: прокси {current_proxy.get_ip()} не распарсился, отправлен на отдых")
+                            current_proxy = None
+                        else:
+                            # Помечаем прокси как использованный
+                            current_proxy.mark_used(current_time)
+                            print(
+                                f"Воркер {worker_id}: использует прокси {current_proxy.get_ip()} (запрос {current_proxy.request_count}/20)")
                     else:
                         # Все прокси в коoldауне - ждем
                         print(f"Воркер {worker_id}: все прокси в режиме отдыха, ожидание...")
@@ -442,14 +457,16 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
                         continue
                 else:
                     # Режим без прокси
-                    req_proxy = None
+                    req_proxy_url = None
+                    req_proxy_auth = None
 
                 try:
                     async with session.post(
                             "https://probpalata.gov.ru/check-uin/",
                             data=data,
                             timeout=aiohttp.ClientTimeout(total=10),
-                            proxy=req_proxy
+                            proxy=req_proxy_url,
+                            proxy_auth=req_proxy_auth
                     ) as response:
                         if response.status != 200:
                             print(f"Воркер {worker_id}: HTTP {response.status} для UIN {uin} → повтор")
