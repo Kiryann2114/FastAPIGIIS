@@ -516,6 +516,10 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
                             await to_thread(mark_sales_needs_check, uin)
                             print(f"Воркер {worker_id}: UIN {uin} — продан, но дата не получена, добавлен в Sales для проверки даты")
 
+                    # Небольшая случайная пауза между успешными проверками,
+                    # чтобы поведение выглядело менее «роботизированным».
+                    await asyncio.sleep(random.uniform(0.8, 1.7))
+
                 except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                     print(f"Воркер {worker_id}: Ошибка запроса для UIN {uin}: {e} → повтор...")
 
@@ -529,7 +533,8 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
                             current_proxy.cooldown_until = current_time + 30  # Отдых 30 сек при ошибке
                             print(f"Прокси {current_proxy.get_ip()} отправлен на отдых из-за ошибки")
 
-                        await asyncio.sleep(2)
+                        # Пауза перед повтором при сетевой/HTTP-ошибке: 3–6 секунд с небольшим рандомом.
+                        await asyncio.sleep(random.uniform(3.0, 6.0))
                         await queue.put(uin)
                     else:
                         print(f"Воркер {worker_id}: UIN {uin} стал проданным, не добавляем в очередь")
