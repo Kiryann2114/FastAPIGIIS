@@ -335,27 +335,67 @@ def update_sales_date_sync_uins_and_maybe_delete(uin: str, sale_date: str):
 
 # === Воркер: проверяет UIN через очередь, с прокси или без ===
 async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
-    headers = {
-        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-        'accept-encoding': 'gzip, deflate, br, zstd',
-        'accept-language': 'ru,en;q=0.9',
-        'cache-control': 'no-cache',
-        'connection': 'keep-alive',
-        'content-type': 'application/x-www-form-urlencoded',
-        'host': 'probpalata.gov.ru',
-        'origin': 'https://probpalata.gov.ru',
-        'pragma': 'no-cache',
-        'referer': 'https://probpalata.gov.ru/',
-        'sec-ch-ua': '"Not)A;Brand";v="8", "Chromium";v="138", "YaBrowser";v="25.8", "Yowser";v="2.5"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"Windows"',
-        'sec-fetch-dest': 'document',
-        'sec-fetch-mode': 'navigate',
-        'sec-fetch-site': 'same-origin',
-        'sec-fetch-user': '?1',
-        'upgrade-insecure-requests': '1',
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36'
-    }
+    # Несколько вариантов заголовков для маскировки под разные браузеры
+    headers_variants = [
+        {
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'accept-encoding': 'gzip, deflate, br, zstd',
+            'accept-language': 'ru,en;q=0.9',
+            'cache-control': 'no-cache',
+            'connection': 'keep-alive',
+            'content-type': 'application/x-www-form-urlencoded',
+            'host': 'probpalata.gov.ru',
+            'origin': 'https://probpalata.gov.ru',
+            'pragma': 'no-cache',
+            'referer': 'https://probpalata.gov.ru/',
+            'sec-ch-ua': '"Not)A;Brand";v="8", "Chromium";v="122", "Google Chrome";v="122"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+            'sec-fetch-dest': 'document',
+            'sec-fetch-mode': 'navigate',
+            'sec-fetch-site': 'same-origin',
+            'sec-fetch-user': '?1',
+            'upgrade-insecure-requests': '1',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        },
+        {
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+            'accept-encoding': 'gzip, deflate, br, zstd',
+            'accept-language': 'ru,en;q=0.8',
+            'cache-control': 'no-cache',
+            'connection': 'keep-alive',
+            'content-type': 'application/x-www-form-urlencoded',
+            'host': 'probpalata.gov.ru',
+            'origin': 'https://probpalata.gov.ru',
+            'pragma': 'no-cache',
+            'referer': 'https://probpalata.gov.ru/',
+            'sec-ch-ua': '"Not.A/Brand";v="8", "Chromium";v="120", "Microsoft Edge";v="120"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+            'sec-fetch-dest': 'document',
+            'sec-fetch-mode': 'navigate',
+            'sec-fetch-site': 'same-origin',
+            'sec-fetch-user': '?1',
+            'upgrade-insecure-requests': '1',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0'
+        },
+        {
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'accept-encoding': 'gzip, deflate, br, zstd',
+            'accept-language': 'ru,en-US;q=0.7,en;q=0.3',
+            'cache-control': 'no-cache',
+            'connection': 'keep-alive',
+            'content-type': 'application/x-www-form-urlencoded',
+            'host': 'probpalata.gov.ru',
+            'origin': 'https://probpalata.gov.ru',
+            'pragma': 'no-cache',
+            'referer': 'https://probpalata.gov.ru/',
+            'upgrade-insecure-requests': '1',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0'
+        },
+    ]
+
+    headers = random.choice(headers_variants)
 
     # Структура для хранения состояния прокси (для probpalata)
     class ProxyState:
@@ -364,6 +404,8 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
             self.request_count = 0
             self.cooldown_until = cooldown_until  # Время до которого прокси отдыхает
             self.last_used = 0
+            self.consecutive_403 = 0
+            self.consecutive_failures = 0
 
         def can_use(self, current_time):
             return current_time >= self.cooldown_until
@@ -492,10 +534,30 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
 
                             print(f"Воркер {worker_id}: HTTP {response.status} для UIN {uin} → повтор. Фрагмент ответа: {body_snippet}")
 
-                            # Прокси, вернувший 503/403/другой ошибку — отправляем на отдых, чтобы следующая попытка шла через другой
+                            # Прокси, вернувший 503/403/другой ошибку — отправляем на короткий отдых,
+                            # накапливаем счётчики, чтобы при постоянных ошибках отключать его надольше.
                             if has_proxies and 'current_proxy' in locals():
                                 current_proxy.request_count = 0
+                                # Базовый отдых 30 секунд
                                 current_proxy.cooldown_until = current_time + 30
+
+                                if response.status == 403:
+                                    current_proxy.consecutive_403 += 1
+                                    print(f"Прокси {current_proxy.get_ip()} — подряд 403: {current_proxy.consecutive_403}")
+                                    # Если прокси стабильно получает 403, отключаем его надолго (10 минут)
+                                    if current_proxy.consecutive_403 >= 3:
+                                        current_proxy.cooldown_until = current_time + 600
+                                        current_proxy.consecutive_403 = 0
+                                        print(f"Прокси {current_proxy.get_ip()} временно отключён на 10 минут из-за повторяющихся 403")
+                                else:
+                                    current_proxy.consecutive_failures += 1
+                                    print(f"Прокси {current_proxy.get_ip()} — подряд ошибок: {current_proxy.consecutive_failures}")
+                                    # Если много разных ошибок подряд — тоже отключаем на 10 минут
+                                    if current_proxy.consecutive_failures >= 5:
+                                        current_proxy.cooldown_until = current_time + 600
+                                        current_proxy.consecutive_failures = 0
+                                        print(f"Прокси {current_proxy.get_ip()} временно отключён на 10 минут из-за повторяющихся ошибок")
+
                                 print(f"Прокси {current_proxy.get_ip()} отправлен на отдых из-за HTTP {response.status}")
 
                             # ПРОВЕРЯЕМ СТАТУС ПЕРЕД ПОВТОРНЫМ ДОБАВЛЕНИЕМ
@@ -523,6 +585,9 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
                         if status == "Продан":
                             await to_thread(mark_sales_needs_check, uin)
                             print(f"Воркер {worker_id}: UIN {uin} — добавлен в очередь на проверку даты продажи")
+
+                        # Небольшая пауза между успешными запросами, чтобы снизить нагрузку
+                        await asyncio.sleep(1)
 
                 except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                     print(f"Воркер {worker_id}: Ошибка запроса для UIN {uin}: {e} → повтор...")
@@ -757,7 +822,9 @@ async def chek_uins(shutdown: asyncio.Event):
                 await asyncio.gather(*tasks, return_exceptions=True)
             tasks.clear()
 
-            num_workers = max(1, len(current_proxies) // 2) if current_proxies else 1
+            base_workers = max(1, len(current_proxies) // 2) if current_proxies else 1
+            # Ограничиваем количество воркеров, чтобы не засыпать сайт запросами
+            num_workers = min(3, base_workers)
             proxy_pairs = []
             if current_proxies:
                 for i in range(0, len(current_proxies), 2):
