@@ -53,6 +53,8 @@ def init_db():
     # Добавим тестового пользователя: login=test, password=test
     cursor.execute("INSERT OR IGNORE INTO account (login, password) VALUES (?, ?)",
                    ("admin", hashlib.sha256("h6mCbIA0GN".encode()).hexdigest()))
+    # Нормализация: заменяем 'проверка' на 'Проверка'
+    cursor.execute("UPDATE UINs SET status = 'Проверка' WHERE status = 'проверка'")
     conn.commit()
     conn.close()
 
@@ -93,7 +95,7 @@ def SetUIN(Uins):
         for UIN in Uins:
             cursor.execute("SELECT COUNT(*) FROM UINs WHERE UIN = ?", (UIN,))
             if cursor.fetchone()[0] > 0:
-                cursor.execute("UPDATE UINs SET status = 'проверка', last_checked = ? WHERE UIN = ?",
+                cursor.execute("UPDATE UINs SET status = 'Проверка', last_checked = ? WHERE UIN = ?",
                                (current_time, UIN))
             else:
                 cursor.execute("INSERT INTO UINs (UIN, last_checked) VALUES (?, ?)",
@@ -136,7 +138,7 @@ def GetUIN(Uins):
 def GetUINStatus():
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT UIN, status, date_sales FROM UINs WHERE status != 'проверка'")
+    cursor.execute("SELECT UIN, status, date_sales FROM UINs WHERE status != 'Проверка'")
     result = [{'uin': row[0], 'status': row[1], 'date_sales': row[2]} for row in cursor.fetchall()]
     conn.close()
     return result
@@ -452,10 +454,17 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
                         if response.status != 200:
                             print(f"Воркер {worker_id}: HTTP {response.status} для UIN {uin} → повтор")
 
+                            # Прокси, вернувший 503/другой ошибку — отправляем на отдых, чтобы следующая попытка шла через другой
+                            if has_proxies and 'current_proxy' in locals():
+                                current_proxy.request_count = 0
+                                current_proxy.cooldown_until = current_time + 30
+                                print(f"Прокси {current_proxy.get_ip()} отправлен на отдых из-за HTTP {response.status}")
+
                             # ПРОВЕРЯЕМ СТАТУС ПЕРЕД ПОВТОРНЫМ ДОБАВЛЕНИЕМ
                             current_status = await to_thread(get_uin_status_from_db, uin)
                             if not current_status or current_status != 'Продан':
-                                await asyncio.sleep(2)
+                                retry_delay = 5 if response.status == 503 else 2
+                                await asyncio.sleep(retry_delay)
                                 await queue.put(uin)
                             else:
                                 print(f"Воркер {worker_id}: UIN {uin} стал проданным, не добавляем в очередь")
