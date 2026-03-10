@@ -3,6 +3,7 @@ import sqlite3
 import asyncio
 import hashlib
 import os
+import random
 from pydantic import BaseModel
 from fastapi import FastAPI, BackgroundTasks
 from contextlib import asynccontextmanager
@@ -379,14 +380,15 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
         def get_proxy_config(self) -> tuple[Optional[str], Optional[aiohttp.BasicAuth]]:
             """
             Возвращает (proxy_url, proxy_auth) для aiohttp для запросов к probpalata.gov.ru.
-            Как и в Sales, формируем proxy_url без user:pass, а логин/пароль передаём через proxy_auth.
+            Здесь авторизация идёт через user:pass в URL (как раньше),
+            proxy_auth не используется (возвращается None).
             """
             try:
                 user_pass, ip_port = self.proxy_str.split("@")
                 user, password = user_pass.split(":", 1)
                 ip, port = ip_port.split(":")
-                proxy_url = f"http://{ip}:{port}"
-                proxy_auth = aiohttp.BasicAuth(user, password)
+                proxy_url = f"http://{user}:{password}@{ip}:{port}"
+                proxy_auth = None
                 return proxy_url, proxy_auth
             except Exception:
                 return None, None
@@ -403,6 +405,7 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
     has_proxies = len(proxies) > 0
 
     async with aiohttp.ClientSession(headers=headers) as session:
+        session_inited = False  # делали ли уже стартовый GET как «браузер»
         while True:
             try:
                 uin = await queue.get()
@@ -422,8 +425,7 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
                 data = {'action': 'check', 'uin': uin}
 
                 # Выбор доступного прокси
-                req_proxy_url = None
-                req_proxy_auth = None
+                req_proxy = None
                 current_time = asyncio.get_event_loop().time()
 
                 if has_proxies:
@@ -435,9 +437,9 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
                         available_proxies.sort(key=lambda x: x.last_used)
                         current_proxy = available_proxies[0]
 
-                        # Форматируем прокси для aiohttp: proxy_url + proxy_auth
-                        req_proxy_url, req_proxy_auth = current_proxy.get_proxy_config()
-                        if not req_proxy_url:
+                        # Форматируем прокси для aiohttp (user:pass@ip:port в URL)
+                        req_proxy, _ = current_proxy.get_proxy_config()
+                        if not req_proxy:
                             # Не удалось распарсить прокси — отправляем его на отдых и пробуем другой
                             current_proxy.cooldown_until = current_time + 30
                             current_proxy.request_count = 0
@@ -457,21 +459,40 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
                         continue
                 else:
                     # Режим без прокси
-                    req_proxy_url = None
-                    req_proxy_auth = None
+                    req_proxy = None
 
                 try:
+                    # «Полный сценарий браузера»: стартовый GET главной страницы,
+                    # чтобы получить cookies/сессию перед первым POST.
+                    if not session_inited:
+                        try:
+                            async with session.get(
+                                "https://probpalata.gov.ru/",
+                                timeout=aiohttp.ClientTimeout(total=10),
+                                proxy=req_proxy,
+                            ) as _:
+                                pass
+                        except Exception as e:
+                            print(f"Воркер {worker_id}: Ошибка стартового GET probpalata.gov.ru: {e}")
+                        session_inited = True
+
                     async with session.post(
                             "https://probpalata.gov.ru/check-uin/",
                             data=data,
                             timeout=aiohttp.ClientTimeout(total=10),
-                            proxy=req_proxy_url,
-                            proxy_auth=req_proxy_auth
+                            proxy=req_proxy,
                     ) as response:
                         if response.status != 200:
-                            print(f"Воркер {worker_id}: HTTP {response.status} для UIN {uin} → повтор")
+                            # Читаем часть тела ответа для диагностики (не более 300 символов)
+                            try:
+                                body = await response.text()
+                                body_snippet = body[:300].replace("\n", " ").replace("\r", " ")
+                            except Exception as e:
+                                body_snippet = f"<не удалось прочитать тело ответа: {e}>"
 
-                            # Прокси, вернувший 503/другой ошибку — отправляем на отдых, чтобы следующая попытка шла через другой
+                            print(f"Воркер {worker_id}: HTTP {response.status} для UIN {uin} → повтор. Фрагмент ответа: {body_snippet}")
+
+                            # Прокси, вернувший 503/403/другой ошибку — отправляем на отдых, чтобы следующая попытка шла через другой
                             if has_proxies and 'current_proxy' in locals():
                                 current_proxy.request_count = 0
                                 current_proxy.cooldown_until = current_time + 30
@@ -480,7 +501,7 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
                             # ПРОВЕРЯЕМ СТАТУС ПЕРЕД ПОВТОРНЫМ ДОБАВЛЕНИЕМ
                             current_status = await to_thread(get_uin_status_from_db, uin)
                             if not current_status or current_status != 'Продан':
-                                retry_delay = 5 if response.status == 503 else 2
+                                retry_delay = 5 if response.status in (503, 403) else 2
                                 await asyncio.sleep(retry_delay)
                                 await queue.put(uin)
                             else:
