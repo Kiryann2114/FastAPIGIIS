@@ -34,7 +34,8 @@ def init_db():
                        status TEXT DEFAULT 'Проверка',
                        cheker INTEGER DEFAULT -1,
                        last_checked TEXT DEFAULT '2000-01-01 00:00:00',
-                       date_sales TEXT DEFAULT NULL
+                       date_sales TEXT DEFAULT NULL,
+                       seller TEXT DEFAULT NULL
                    )
                    ''')
     cursor.execute('''
@@ -56,6 +57,11 @@ def init_db():
                    ("admin", hashlib.sha256("h6mCbIA0GN".encode()).hexdigest()))
     # Нормализация: заменяем 'проверка' на 'Проверка'
     cursor.execute("UPDATE UINs SET status = 'Проверка' WHERE status = 'проверка'")
+    # Миграция: добавляем колонку seller для существующих БД
+    cursor.execute("PRAGMA table_info(UINs)")
+    uins_columns = [row[1] for row in cursor.fetchall()]
+    if "seller" not in uins_columns:
+        cursor.execute("ALTER TABLE UINs ADD COLUMN seller TEXT DEFAULT NULL")
     conn.commit()
     conn.close()
 
@@ -128,10 +134,10 @@ def GetUIN(Uins):
     cursor = conn.cursor()
     arr_uin = []
     for uin in Uins:
-        cursor.execute("SELECT UIN, status, date_sales FROM UINs WHERE UIN = ?", (uin,))
+        cursor.execute("SELECT UIN, status, date_sales, seller FROM UINs WHERE UIN = ?", (uin,))
         result = cursor.fetchone()
         if result:
-            arr_uin.append({'uin': result[0], 'status': result[1], 'date_sales': result[2]})
+            arr_uin.append({'uin': result[0], 'status': result[1], 'date_sales': result[2], 'seller': result[3]})
     conn.close()
     return arr_uin
 
@@ -139,8 +145,8 @@ def GetUIN(Uins):
 def GetUINStatus():
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT UIN, status, date_sales FROM UINs WHERE status != 'Проверка'")
-    result = [{'uin': row[0], 'status': row[1], 'date_sales': row[2]} for row in cursor.fetchall()]
+    cursor.execute("SELECT UIN, status, date_sales, seller FROM UINs WHERE status != 'Проверка'")
+    result = [{'uin': row[0], 'status': row[1], 'date_sales': row[2], 'seller': row[3]} for row in cursor.fetchall()]
     conn.close()
     return result
 
@@ -236,6 +242,15 @@ def update_uin_sale_date(uin: str, sale_date: str):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("UPDATE UINs SET date_sales = ? WHERE UIN = ?", (sale_date, uin))
+    conn.commit()
+    conn.close()
+
+
+def update_uin_seller(uin: str, seller: str):
+    """Записать продавца в UINs.seller."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE UINs SET seller = ? WHERE UIN = ?", (seller, uin))
     conn.commit()
     conn.close()
 
@@ -494,8 +509,9 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
 
                     status = "НеПродан"
                     sale_date = None
+                    seller = None
                     try:
-                        status, sale_date = await fetch_status_and_date_from_giis(
+                        status, sale_date, seller = await fetch_status_and_date_from_giis(
                             uin, session, proxy_url, proxy_auth
                         )
                     except Exception as e:
@@ -505,6 +521,10 @@ async def worker(worker_id: int, proxies: list, queue: asyncio.Queue):
                     # Обновление статуса UIN в БД
                     await to_thread(update_uin_status, uin, status)
                     print(f"Воркер {worker_id}: UIN {uin} — статус '{status}' (через dmdk)")
+
+                    if seller:
+                        await to_thread(update_uin_seller, uin, seller)
+                        print(f"Воркер {worker_id}: UIN {uin} — продавец '{seller}'")
 
                     if status == "Продан":
                         if sale_date:
@@ -740,11 +760,12 @@ async def fetch_status_and_date_from_giis(
     session: aiohttp.ClientSession,
     proxy: Optional[str],
     proxy_auth: Optional[aiohttp.BasicAuth],
-) -> tuple[str, Optional[str]]:
+) -> tuple[str, Optional[str], Optional[str]]:
     """
     Единый запрос к dmdk.ru, возвращающий:
     - статус UIN ("Продан" / "НеПродан")
     - дату продажи (dd.mm.yyyy) или None.
+    - продавца или None.
     Использует тот же механизм, что и fetch_sales_date_from_giis.
     """
     if not proxy:
@@ -822,19 +843,29 @@ async def fetch_status_and_date_from_giis(
     status_text = status_span.get_text(" ", strip=True) if status_span else ""
     status = "Продан" if "Продано" in status_text else "НеПродан"
 
+    # Продавец — по аналогии с датой продажи (под подписью "Продавец")
+    seller_label = soup.find("span", string=lambda s: s and "Продавец" in s)
+    seller = None
+    if seller_label:
+        seller_container = seller_label.find_parent("div", class_=lambda c: c and "row" in c) or seller_label.parent
+        seller_text = seller_container.get_text(" ", strip=True) if seller_container else soup.get_text(" ", strip=True)
+        seller_text = re.sub(r"\s+", " ", seller_text).strip()
+        seller_text = re.sub(r"^Продавец[:\s]*", "", seller_text, flags=re.IGNORECASE).strip()
+        seller = seller_text or None
+
     # Дата продажи — логика такая же, как в fetch_sales_date_from_giis
     label = soup.find("span", string=lambda s: s and "Дата продажи" in s)
     if not label:
         # fallback: regex по всему ответу
         m = re.search(r"\b\d{2}\.\d{2}\.\d{4}\b", result_html)
         sale_date = m.group(0) if m else None
-        return status, sale_date
+        return status, sale_date, seller
 
     container = label.find_parent("div", class_=lambda c: c and "row" in c) or label.parent
     text = container.get_text(" ", strip=True) if container else soup.get_text(" ", strip=True)
     m = re.search(r"\b\d{2}\.\d{2}\.\d{4}\b", text)
     sale_date = m.group(0) if m else None
-    return status, sale_date
+    return status, sale_date, seller
 
 # === Основной процесс проверки UIN ===
 async def chek_uins(shutdown: asyncio.Event):
