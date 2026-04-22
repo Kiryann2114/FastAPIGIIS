@@ -328,6 +328,36 @@ def get_sales_uins_for_checking_batch(limit=100):
     return result
 
 
+def enqueue_missing_seller_uins_to_sales(limit=100) -> int:
+    """
+    Добавить в Sales (date_sales='Проверка') проданные UIN'ы,
+    у которых seller ещё не заполнен в UINs.
+    Возвращает количество добавленных/обновлённых записей.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            '''
+            SELECT U.UIN
+            FROM UINs U
+            LEFT JOIN Sales S ON S.UIN = U.UIN
+            WHERE U.status = 'Продан'
+              AND (U.seller IS NULL OR TRIM(U.seller) = '')
+              AND S.UIN IS NULL
+            LIMIT ?
+            ''',
+            (limit,)
+        )
+        uins = [row[0] for row in cursor.fetchall()]
+        for uin in uins:
+            cursor.execute("INSERT OR REPLACE INTO Sales (UIN, date_sales) VALUES (?, ?)", (uin, 'Проверка'))
+        conn.commit()
+        return len(uins)
+    finally:
+        conn.close()
+
+
 def update_sales_date_sync_uins_and_maybe_delete(uin: str, sale_date: str):
     """
     1) Пишет дату в Sales.date_sales
@@ -988,14 +1018,21 @@ async def sales_worker(worker_id: int, pool: SalesProxyPool, queue: asyncio.Queu
                     print(f"[Sales Worker {worker_id}]: UIN {uin} — попытка {attempts_made}/3 через прокси {proxy_ip}")
 
                     try:
-                        sale_date = await fetch_sales_date_from_giis(uin, session, req_proxy, req_proxy_auth)
+                        status, sale_date, seller = await fetch_status_and_date_from_giis(
+                            uin, session, req_proxy, req_proxy_auth
+                        )
+                        if seller:
+                            await to_thread(update_uin_seller, uin, seller)
+                            print(f"[Sales Worker {worker_id}]: UIN {uin} — продавец '{seller}' обновлён")
+
                         if sale_date:
                             await to_thread(update_sales_date_sync_uins_and_maybe_delete, uin, sale_date)
-                            print(f"[Sales Worker {worker_id}]: UIN {uin} — дата продажи '{sale_date}' обработана (Sales -> UINs при наличии)")
+                            print(
+                                f"[Sales Worker {worker_id}]: UIN {uin} — статус '{status}', дата продажи '{sale_date}' обработана (Sales -> UINs при наличии)")
                             success = True
                             break
                         else:
-                            print(f"[Sales Worker {worker_id}]: UIN {uin} — попытка {attempts_made}/3: дата не получена")
+                            print(f"[Sales Worker {worker_id}]: UIN {uin} — попытка {attempts_made}/3: дата не получена (статус '{status}')")
                     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                         now = asyncio.get_event_loop().time()
                         if proxy_state is not None:
@@ -1061,6 +1098,14 @@ async def chek_sales_dates(shutdown: asyncio.Event):
                 print(f"[Sales] Обновлён список прокси: {len(current_proxies)} шт.")
         except Exception as e:
             print(f"[Sales] Ошибка обновления прокси: {e}")
+
+        # Добавляем в очередь UIN'ы с отсутствующим seller (для повторной попытки добора продавца)
+        try:
+            added_missing_seller = await to_thread(enqueue_missing_seller_uins_to_sales, SALES_BATCH_SIZE)
+            if added_missing_seller > 0:
+                print(f"[Sales] Добавлено {added_missing_seller} UIN'ов с пустым seller в очередь Sales")
+        except Exception as e:
+            print(f"[Sales] Ошибка постановки UIN'ов с пустым seller в очередь: {e}")
 
         # Если очередь почти пустая, загружаем следующую партию UIN
         if queue.qsize() < SALES_BATCH_SIZE // 2:
