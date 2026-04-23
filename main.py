@@ -330,7 +330,7 @@ def get_sales_uins_for_checking_batch(limit=100):
 
 def enqueue_missing_seller_uins_to_sales(limit=100) -> int:
     """
-    Добавить в Sales (date_sales='Проверка') проданные UIN'ы,
+    Добавить/обновить в Sales (date_sales='Проверка') UIN'ы,
     у которых seller ещё не заполнен в UINs.
     Возвращает количество добавленных/обновлённых записей.
     """
@@ -341,10 +341,7 @@ def enqueue_missing_seller_uins_to_sales(limit=100) -> int:
             '''
             SELECT U.UIN
             FROM UINs U
-            LEFT JOIN Sales S ON S.UIN = U.UIN
-            WHERE U.status = 'Продан'
-              AND (U.seller IS NULL OR TRIM(U.seller) = '')
-              AND S.UIN IS NULL
+            WHERE (U.seller IS NULL OR TRIM(U.seller) = '')
             LIMIT ?
             ''',
             (limit,)
@@ -865,37 +862,57 @@ async def fetch_status_and_date_from_giis(
             )
         result_html = await r.text()
 
-    # Разбор HTML: статус + дата
+    # Разбор HTML: статус + дата + продавец
     soup = BeautifulSoup(result_html, "html.parser")
+
+    def extract_value_by_label(label_text: str) -> Optional[str]:
+        """
+        Достаёт значение рядом с подписью (например, 'Продавец', 'Дата продажи').
+        Пробует сначала строку в текущем row-контейнере, затем fallback по общему тексту.
+        """
+        label_node = soup.find(string=lambda s: s and label_text in s)
+        if not label_node:
+            return None
+
+        label_tag = label_node.parent if hasattr(label_node, "parent") else None
+        container = None
+        if label_tag:
+            container = label_tag.find_parent("div", class_=lambda c: c and "row" in c) or label_tag.parent
+
+        if container:
+            raw = container.get_text(" ", strip=True)
+        else:
+            raw = soup.get_text(" ", strip=True)
+
+        raw = re.sub(r"\s+", " ", raw).strip()
+        value = re.sub(rf"^{re.escape(label_text)}[:\s-]*", "", raw, flags=re.IGNORECASE).strip()
+
+        if not value:
+            return None
+        if value in {"-", "—", "нет данных", "Не указано"}:
+            return None
+        return value
 
     # Статус: смотрим на кнопку со статусом
     status_span = soup.find("span", class_="fw-bold status-button__text-large")
     status_text = status_span.get_text(" ", strip=True) if status_span else ""
     status = "Продан" if "Продано" in status_text else "НеПродан"
 
-    # Продавец — по аналогии с датой продажи (под подписью "Продавец")
-    seller_label = soup.find("span", string=lambda s: s and "Продавец" in s)
-    seller = None
-    if seller_label:
-        seller_container = seller_label.find_parent("div", class_=lambda c: c and "row" in c) or seller_label.parent
-        seller_text = seller_container.get_text(" ", strip=True) if seller_container else soup.get_text(" ", strip=True)
-        seller_text = re.sub(r"\s+", " ", seller_text).strip()
-        seller_text = re.sub(r"^Продавец[:\s]*", "", seller_text, flags=re.IGNORECASE).strip()
-        seller = seller_text or None
+    # Продавец — по подписи "Продавец"
+    seller = extract_value_by_label("Продавец")
 
     # Дата продажи — логика такая же, как в fetch_sales_date_from_giis
-    label = soup.find("span", string=lambda s: s and "Дата продажи" in s)
-    if not label:
+    sale_date_text = extract_value_by_label("Дата продажи")
+    if sale_date_text:
+        m = re.search(r"\b\d{2}\.\d{2}\.\d{4}\b", sale_date_text)
+        sale_date = m.group(0) if m else None
+        return status, sale_date, seller
+
+    if not sale_date_text:
         # fallback: regex по всему ответу
         m = re.search(r"\b\d{2}\.\d{2}\.\d{4}\b", result_html)
         sale_date = m.group(0) if m else None
         return status, sale_date, seller
-
-    container = label.find_parent("div", class_=lambda c: c and "row" in c) or label.parent
-    text = container.get_text(" ", strip=True) if container else soup.get_text(" ", strip=True)
-    m = re.search(r"\b\d{2}\.\d{2}\.\d{4}\b", text)
-    sale_date = m.group(0) if m else None
-    return status, sale_date, seller
 
 # === Основной процесс проверки UIN ===
 async def chek_uins(shutdown: asyncio.Event):
